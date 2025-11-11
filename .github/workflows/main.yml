@@ -18,7 +18,34 @@ jobs:
   dump:
     runs-on: ubuntu-latest
 
+    name: CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      ROM_LINK:
+        description: "Direct Link of ROM/Firmware"
+        required: true
+
+env:
+  ROM_LINK: ${{ github.event.inputs.ROM_LINK }}
+  GIT_ORG: "DroidDumps"
+  TG_TOKEN: ${{ secrets.TG_TOKEN }}
+  CHAT_ID: ${{ secrets.CHAT_ID }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  RUNNER_TRACKING_ID: ""
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+
     steps:
+      - name: Free Disk Space
+        uses: rokibhasansagar/slimhub_actions@main
+
+      - name: Prepare Workspace
+        run: cd /tmp
+
       - name: Dump
         run: |
           mkdir -p ~/job && cd ~/job
@@ -32,3 +59,9 @@ jobs:
           ./dumper.sh "${ROM_LINK}" || exit 1
 
           echo test, and deploy your project.
+
+      - name: Upload Dump
+        uses: actions/upload-artifact@v4
+        with:
+          name: dump-output
+          path: /tmp/phoenix_firmware_dumper/output
