@@ -1,24 +1,5 @@
+
 name: CI
-
-on:
-  workflow_dispatch:
-    inputs:
-      ROM_LINK:
-        description: "Direct Link of ROM/Firmware"
-        required: true
-
-env:
-  ROM_LINK: ${{ github.event.inputs.ROM_LINK }}
-  GIT_ORG: "DroidDumps"
-  TG_TOKEN: ${{ secrets.TG_TOKEN }}
-  CHAT_ID: ${{ secrets.CHAT_ID }}
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-jobs:
-  dump:
-    runs-on: ubuntu-latest
-
-    name: CI
 
 on:
   workflow_dispatch:
