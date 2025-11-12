@@ -26,19 +26,18 @@ jobs:
       # Clone Dumpyara repo and setup
       - name: Clone dumpyara
         run: |
-          cd /tmp
-          git clone https://github.com/AndroidDumps/dumpyara.git
-          cd dumpyara
-          chmod +x dumpyara.sh
-          if [ -f setup.sh ]; then
-            sudo bash setup.sh
-          fi
-          # Write GitHub token in the expected place, no newline
-          echo -n "${{ secrets.GITHUB_TOKEN }}" > /tmp/dumpyara/.github_token
-          echo "$GIT_ORG" > .github_orgname
-          echo "$TG_TOKEN" > .tg_token
-          echo "$CHAT_ID" > .tg_chat
-
+         cd /tmp
+         git clone https://github.com/AndroidDumps/dumpyara.git
+         cd dumpyara
+         chmod +x dumpyara.sh
+         if [ -f setup.sh ]; then
+           sudo bash setup.sh
+         fi
+         # Provide personal token to dumpyara
+         echo -n "${{ secrets.DUMPYARA_PAT }}" > /tmp/dumpyara/.github_token
+         echo "$GIT_ORG" > .github_orgname
+         echo "$TG_TOKEN" > .tg_token
+         echo "$CHAT_ID" > .tg_chat
       # Run Dumpyara
       - name: Dump Firmware
         run: |
