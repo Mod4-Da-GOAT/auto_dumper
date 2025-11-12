@@ -1,61 +1,67 @@
-name: CI
+name: Dump Firmware CI
 
 on:
   workflow_dispatch:
     inputs:
       ROM_LINK:
-        description: "Direct Link of ROM/Firmware"
+        description: "Direct URL of ROM/Firmware"
         required: true
 
 env:
-  ROM_LINK: ${{ github.event.inputs.ROM_LINK }}
   GIT_ORG: "DroidDumps"
   TG_TOKEN: ${{ secrets.TG_TOKEN }}
   CHAT_ID: ${{ secrets.CHAT_ID }}
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  DUMPYARA_PAT: ${{ secrets.DUMPYARA_PAT }} # your personal GitHub token if using private repos
 
 jobs:
   dump:
     runs-on: ubuntu-latest
 
     steps:
-      # Free up space before doing any work
+      # Free up space before starting
       - name: Free Disk Space
         uses: rokibhasansagar/slimhub_actions@main
 
-      # Clone Dumpyara repo and setup
-      - name: Setup dumpyara
+      # Clone dumpyara repo
+      - name: Clone Dumpyara
         run: |
-         cd /tmp
-         git clone https://github.com/AndroidDumps/dumpyara.git
-         cd dumpyara
-         chmod +x dumpyara.sh
-         if [ -f setup.sh ]; then
-           sudo bash setup.sh
-         fi
-         # Write token in the correct place for detection
-         echo -n "${{ secrets.DUMPYARA_PAT }}" > .github_token
-         chmod 600 .github_token
-         echo "$GIT_ORG" > .github_orgname
-         echo "$TG_TOKEN" > .tg_token
-         echo "$CHAT_ID" > .tg_chat
+          cd /tmp
+          git clone https://github.com/AndroidDumps/dumpyara.git
+          cd dumpyara
+          chmod +x dumpyara.sh
+          if [ -f setup.sh ]; then
+            sudo bash setup.sh
+          fi
+          # Provide GitHub token for dumpyara if needed
+          echo -n "$DUMPYARA_PAT" > /tmp/dumpyara/.github_token
+          chmod 600 /tmp/dumpyara/.github_token
+          echo "$GIT_ORG" > .github_orgname
+          echo "$TG_TOKEN" > .tg_token
+          echo "$CHAT_ID" > .tg_chat
 
+      # Download ROM to a short path
+      - name: Download ROM
+        run: |
+          mkdir -p /tmp/roms
+          ROM_FILE="/tmp/roms/firmware.zip"
+          echo "Downloading ROM from ${ROM_LINK}"
+          wget -O "$ROM_FILE" "${ROM_LINK}"
+
+      # Run Dumpyara on the local ROM file
       - name: Dump Firmware
         run: |
-         # Create short working directory
-         mkdir -p /tmp/df
-         cd /tmp/dumpyara
-         ./dumpyara.sh --shortname "${ROM_LINK}" --working-dir /tmp/df || exit 1
+          mkdir -p /tmp/df
+          cd /tmp/dumpyara
+          ./dumpyara.sh --shortname "/tmp/roms/firmware.zip" --working-dir /tmp/df || exit 1
 
-
-      # Upload Dump result
+      # Upload output as artifact
       - name: Upload Dump
         uses: actions/upload-artifact@v4
         with:
           name: dump-output
-          path: /tmp/dumpyara/output
+          path: /tmp/df/output
 
-      # Clean up to prevent leftover data
+      # Clean up temp files
       - name: Cleanup
         run: |
-          sudo rm -rf /tmp/* ~/.cache || true
+          sudo rm -rf /tmp/dumpyara /tmp/roms /tmp/df ~/.cache || true
