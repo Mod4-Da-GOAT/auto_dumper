@@ -19,31 +19,39 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Free up space before doing any work
       - name: Free Disk Space
         uses: rokibhasansagar/slimhub_actions@main
 
-      - name: Setup dumpyara
+      # Clone Dumpyara repo
+      - name: Clone dumpyara
         run: |
           cd /tmp
-          git clone https://github.com/xxxbrian/dumpyara.git dumpyara
+          git clone https://github.com/AndroidDumps/dumpyara.git
           cd dumpyara
-          sudo bash setup.sh
+          chmod +x dumpyara.sh
+          if [ -f setup.sh ]; then
+            sudo bash setup.sh
+          fi
           echo "$GITHUB_TOKEN" > .github_token
           echo "$GIT_ORG" > .github_orgname
           echo "$TG_TOKEN" > .tg_token
           echo "$CHAT_ID" > .tg_chat
 
+      # Run Dumpyara
       - name: Dump Firmware
         run: |
           cd /tmp/dumpyara
           ./dumpyara.sh "${ROM_LINK}" || exit 1
 
+      # Upload Dump result
       - name: Upload Dump
         uses: actions/upload-artifact@v4
         with:
           name: dump-output
           path: /tmp/dumpyara/output
 
+      # Clean up to prevent leftover data
       - name: Cleanup
         run: |
           sudo rm -rf /tmp/* ~/.cache || true
