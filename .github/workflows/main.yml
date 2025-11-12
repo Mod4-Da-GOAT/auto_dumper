@@ -8,10 +8,12 @@ on:
         required: true
 
 env:
+  ROM_LINK: ${{ github.event.inputs.ROM_LINK }}
   GIT_ORG: "DroidDumps"
   TG_TOKEN: ${{ secrets.TG_TOKEN }}
   CHAT_ID: ${{ secrets.CHAT_ID }}
-  DUMPYARA_PAT: ${{ secrets.DUMPYARA_PAT }} # your personal GitHub token if using private repos
+  DUMPYARA_PAT: ${{ secrets.DUMPYARA_PAT }}
+
 
 jobs:
   dump:
