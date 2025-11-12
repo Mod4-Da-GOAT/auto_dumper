@@ -1,4 +1,3 @@
-
 name: CI
 
 on:
@@ -14,7 +13,6 @@ env:
   TG_TOKEN: ${{ secrets.TG_TOKEN }}
   CHAT_ID: ${{ secrets.CHAT_ID }}
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  RUNNER_TRACKING_ID: ""
 
 jobs:
   dump:
@@ -24,25 +22,28 @@ jobs:
       - name: Free Disk Space
         uses: rokibhasansagar/slimhub_actions@main
 
-      - name: Prepare Workspace
-        run: cd /tmp
-
-      - name: Dump
+      - name: Setup dumpyara
         run: |
-          mkdir -p ~/job && cd ~/job
-          git clone https://github.com/DroidDumps/phoenix_firmware_dumper -b rokibhasansagar-patch-1
-          cd phoenix_firmware_dumper
-          sudo bash ./setup.sh || exit 1
+          cd /tmp
+          git clone https://github.com/xxxbrian/dumpyara.git dumpyara
+          cd dumpyara
+          sudo bash setup.sh
           echo "$GITHUB_TOKEN" > .github_token
           echo "$GIT_ORG" > .github_orgname
           echo "$TG_TOKEN" > .tg_token
           echo "$CHAT_ID" > .tg_chat
-          ./dumper.sh "${ROM_LINK}" || exit 1
 
-          echo test, and deploy your project.
+      - name: Dump Firmware
+        run: |
+          cd /tmp/dumpyara
+          ./dumpyara.sh "${ROM_LINK}" || exit 1
 
       - name: Upload Dump
         uses: actions/upload-artifact@v4
         with:
           name: dump-output
-          path: /tmp/phoenix_firmware_dumper/output
+          path: /tmp/dumpyara/output
+
+      - name: Cleanup
+        run: |
+          sudo rm -rf /tmp/* ~/.cache || true
