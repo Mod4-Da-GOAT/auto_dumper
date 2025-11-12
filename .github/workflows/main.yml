@@ -23,7 +23,7 @@ jobs:
       - name: Free Disk Space
         uses: rokibhasansagar/slimhub_actions@main
 
-      # Clone Dumpyara repo
+      # Clone Dumpyara repo and setup
       - name: Clone dumpyara
         run: |
           cd /tmp
@@ -33,7 +33,9 @@ jobs:
           if [ -f setup.sh ]; then
             sudo bash setup.sh
           fi
-          echo "$GITHUB_TOKEN" > .github_token
+          # Use built-in GitHub token for dumpyara
+          echo "${{ secrets.GITHUB_TOKEN }}" > ~/.github_token
+          echo "${{ secrets.GITHUB_TOKEN }}" > /tmp/dumpyara/.github_token
           echo "$GIT_ORG" > .github_orgname
           echo "$TG_TOKEN" > .tg_token
           echo "$CHAT_ID" > .tg_chat
