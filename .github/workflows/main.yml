@@ -33,19 +33,19 @@ jobs:
           if [ -f setup.sh ]; then
             sudo bash setup.sh
           fi
-          # Provide tokens and config
           echo -n "$DUMPYARA_PAT" > /tmp/dumpyara/.github_token
           chmod 600 /tmp/dumpyara/.github_token
           echo "$GIT_ORG" > /tmp/dumpyara/.github_orgname
           echo "$TG_TOKEN" > /tmp/dumpyara/.tg_token
           echo "$CHAT_ID" > /tmp/dumpyara/.tg_chat
 
-      # Install tools needed for decompression
+      # Install extraction tools for .lz4, .img, and archives
       - name: Install Extraction Tools
         run: |
-          sudo apt-get update && sudo apt-get install -y p7zip-full lz4 aria2 curl
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full lz4 simg2img aria2 curl
 
-      # Download ROM with short filename
+      # Download ROM with a fixed short filename
       - name: Download ROM (Fast & Safe Name)
         run: |
           mkdir -p $RUNNER_TEMP/roms
@@ -59,20 +59,28 @@ jobs:
           echo "✅ Download complete: $PWD/$SHORT_FILE"
           ls -lh "$SHORT_FILE"
 
-      # Pre-decompress .lz4 and .tar.md5 files
+      # Pre-decompress .lz4 and .tar.md5 files to .img
       - name: Pre-decompress Firmware Files
         run: |
           cd $RUNNER_TEMP/roms
           for f in *.lz4 *.tar.md5; do
             if [ -f "$f" ]; then
               case "$f" in
-                *.lz4) lz4 -d "$f" "${f%.lz4}" || true ;;
-                *.tar.md5) mv "$f" "${f%.md5}" || true ;; # optional: just remove .md5
+                *.lz4)
+                  OUT="${f%.lz4}.img"
+                  echo "🔹 Decompressing $f -> $OUT"
+                  lz4 -d "$f" "$OUT" || true
+                  ;;
+                *.tar.md5)
+                  OUT="${f%.md5}"
+                  echo "🔹 Stripping md5: $f -> $OUT"
+                  mv "$f" "$OUT" || true
+                  ;;
               esac
             fi
           done
 
-      # Run Dumpyara on the downloaded firmware
+      # Run Dumpyara on the preprocessed firmware
       - name: Dump Firmware
         run: |
           mkdir -p /tmp/df
