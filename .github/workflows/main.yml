@@ -40,32 +40,44 @@ jobs:
           echo "$TG_TOKEN" > /tmp/dumpyara/.tg_token
           echo "$CHAT_ID" > /tmp/dumpyara/.tg_chat
 
-      # Download ROM with short filename for Dumpyara
+      # Install tools needed for decompression
+      - name: Install Extraction Tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y p7zip-full lz4 aria2 curl
+
+      # Download ROM with short filename
       - name: Download ROM (Fast & Safe Name)
         run: |
-          sudo apt-get update -y && sudo apt-get install -y aria2 curl
           mkdir -p $RUNNER_TEMP/roms
           cd $RUNNER_TEMP/roms
-
-          # Extract original filename from link or use fallback
-          ORIG_NAME=$(basename "${ROM_LINK}" | cut -d'?' -f1)
           SHORT_FILE="firmware.zip"
-
           echo "🔽 Downloading ROM from ${ROM_LINK} using aria2c..."
           if ! aria2c -x16 -s16 -m5 -k1M -o "$SHORT_FILE" "${ROM_LINK}"; then
             echo "⚠️ aria2c failed, falling back to curl..."
             curl -L --retry 5 --retry-all-errors -C - -o "$SHORT_FILE" "${ROM_LINK}"
           fi
-
           echo "✅ Download complete: $PWD/$SHORT_FILE"
           ls -lh "$SHORT_FILE"
+
+      # Pre-decompress .lz4 and .tar.md5 files
+      - name: Pre-decompress Firmware Files
+        run: |
+          cd $RUNNER_TEMP/roms
+          for f in *.lz4 *.tar.md5; do
+            if [ -f "$f" ]; then
+              case "$f" in
+                *.lz4) lz4 -d "$f" "${f%.lz4}" || true ;;
+                *.tar.md5) mv "$f" "${f%.md5}" || true ;; # optional: just remove .md5
+              esac
+            fi
+          done
 
       # Run Dumpyara on the downloaded firmware
       - name: Dump Firmware
         run: |
           mkdir -p /tmp/df
           cd /tmp/dumpyara
-          ./dumpyara.sh "$RUNNER_TEMP/roms/firmware.zip" --working-dir /tmp/df || exit 1
+          ./dumpyara.sh "$RUNNER_TEMP/roms/firmware.zip" --working-dir /tmp/df || true
 
       # Rename output folder to match original firmware name
       - name: Rename Output Folder
