@@ -14,13 +14,12 @@ env:
   CHAT_ID: ${{ secrets.CHAT_ID }}
   DUMPYARA_PAT: ${{ secrets.DUMPYARA_PAT }}
 
-
 jobs:
   dump:
     runs-on: ubuntu-latest
 
     steps:
-      # Free up space before starting
+      # Free up space
       - name: Free Disk Space
         uses: rokibhasansagar/slimhub_actions@main
 
@@ -34,35 +33,38 @@ jobs:
           if [ -f setup.sh ]; then
             sudo bash setup.sh
           fi
-          # Provide GitHub token for dumpyara if needed
+          # Provide tokens and info
           echo -n "$DUMPYARA_PAT" > /tmp/dumpyara/.github_token
           chmod 600 /tmp/dumpyara/.github_token
-          echo "$GIT_ORG" > .github_orgname
-          echo "$TG_TOKEN" > .tg_token
-          echo "$CHAT_ID" > .tg_chat
+          echo "$GIT_ORG" > /tmp/dumpyara/.github_orgname
+          echo "$TG_TOKEN" > /tmp/dumpyara/.tg_token
+          echo "$CHAT_ID" > /tmp/dumpyara/.tg_chat
 
-      # Download ROM to a short path
-      - name: Download ROM
+      # Fast multi-threaded firmware download
+      - name: Download ROM (Fast)
         run: |
+          sudo apt-get update -y && sudo apt-get install -y aria2
           mkdir -p /tmp/roms
           ROM_FILE="/tmp/roms/firmware.zip"
-          echo "Downloading ROM from ${ROM_LINK}"
-          wget -O "$ROM_FILE" "${ROM_LINK}"
+          echo "Downloading ROM from ${ROM_LINK} using aria2c..."
+          aria2c -x16 -s16 -m5 -k1M -o "$ROM_FILE" "${ROM_LINK}"
+          echo "Download complete: $ROM_FILE"
+          ls -lh "$ROM_FILE"
 
-      # Run Dumpyara on the local ROM file
+      # Run Dumpyara on the downloaded file
       - name: Dump Firmware
         run: |
           cd /tmp/dumpyara
-          ./dumpyara.sh "${ROM_LINK}" || exit 1
+          ./dumpyara.sh "/tmp/roms/firmware.zip" || exit 1
 
-      # Upload output as artifact
+      # Upload results as artifact
       - name: Upload Dump
         uses: actions/upload-artifact@v4
         with:
           name: dump-output
           path: /tmp/df/output
 
-      # Clean up temp files
+      # Cleanup temporary files
       - name: Cleanup
         run: |
           sudo rm -rf /tmp/dumpyara /tmp/roms /tmp/df ~/.cache || true
