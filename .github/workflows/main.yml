@@ -43,7 +43,7 @@ jobs:
       - name: Install Extraction Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y p7zip-full lz4 simg2img aria2 curl
+          sudo apt-get install -y p7zip-full lz4 android-sdk-libsparse-utils aria2 curl
 
       # Download ROM with a fixed short filename
       - name: Download ROM (Fast & Safe Name)
