@@ -59,28 +59,7 @@ jobs:
           echo "✅ Download complete: $PWD/$SHORT_FILE"
           ls -lh "$SHORT_FILE"
 
-      # Pre-decompress .lz4 and .tar.md5 files to .img
-      - name: Pre-decompress Firmware Files
-        run: |
-          cd $RUNNER_TEMP/roms
-          for f in *.lz4 *.tar.md5; do
-            if [ -f "$f" ]; then
-              case "$f" in
-                *.lz4)
-                  OUT="${f%.lz4}.img"
-                  echo "🔹 Decompressing $f -> $OUT"
-                  lz4 -d "$f" "$OUT" || true
-                  ;;
-                *.tar.md5)
-                  OUT="${f%.md5}"
-                  echo "🔹 Stripping md5: $f -> $OUT"
-                  mv "$f" "$OUT" || true
-                  ;;
-              esac
-            fi
-          done
-
-      # Run Dumpyara on the preprocessed firmware
+      # Run Dumpyara directly on the downloaded firmware
       - name: Dump Firmware
         run: |
           mkdir -p /tmp/df
