@@ -52,9 +52,8 @@ jobs:
       # Run Dumpyara on the local ROM file
       - name: Dump Firmware
         run: |
-          mkdir -p /tmp/df
           cd /tmp/dumpyara
-          ./dumpyara.sh --shortname "/tmp/roms/firmware.zip" --working-dir /tmp/df || exit 1
+          ./dumpyara.sh "${ROM_LINK}" || exit 1
 
       # Upload output as artifact
       - name: Upload Dump
