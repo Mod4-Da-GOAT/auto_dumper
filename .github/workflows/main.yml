@@ -47,44 +47,43 @@ jobs:
       - name: Create 7z wrapper script
         run: |
           cat << 'EOF' > /tmp/7z-wrapper.sh
-#!/usr/bin/env bash
-START=$(date +%s)   # prevent "0-second" execution bug
+          #!/usr/bin/env bash
+          START=$(date +%s)
 
-REAL7Z="/usr/bin/7z.real"
+          REAL7Z="/usr/bin/7z.real"
 
-for arg in "$@"; do
-  if [[ "$arg" =~ ^- ]]; then continue; fi
-  candidate="$arg"
-  dir=$(dirname "$candidate")
+          for arg in "$@"; do
+            if [[ "$arg" =~ ^- ]]; then continue; fi
+            candidate="$arg"
+            dir=$(dirname "$candidate")
 
-  # Unpack super.img.raw early
-  if [[ "$candidate" != *"*"* ]] && [ -f "${dir}/super.img.raw" ] && [ ! -d "${dir}/super_unpacked" ]; then
-    echo "[wrapper] Found super.img.raw — unpacking..."
-    mkdir -p "${dir}/super_unpacked"
-    if command -v lpunpack >/dev/null 2>&1; then
-      lpunpack "${dir}/super.img.raw" "${dir}/super_unpacked" || echo "[wrapper] lpunpack failed"
-      mv "${dir}/super_unpacked/"*.img "${dir}/" 2>/dev/null || true
-    fi
-  fi
+            # Unpack super.img.raw early
+            if [[ "$candidate" != *"*"* ]] && [ -f "${dir}/super.img.raw" ] && [ ! -d "${dir}/super_unpacked" ]; then
+              echo "[wrapper] Found super.img.raw — unpacking..."
+              mkdir -p "${dir}/super_unpacked"
+              if command -v lpunpack >/dev/null 2>&1; then
+                lpunpack "${dir}/super.img.raw" "${dir}/super_unpacked" || echo "[wrapper] lpunpack failed"
+                mv "${dir}/super_unpacked/"*.img "${dir}/" 2>/dev/null || true
+              fi
+            fi
 
-  # Convert sparse → raw
-  if [ -f "$candidate" ] && file -b "$candidate" | grep -qi "Android sparse image"; then
-    echo "[wrapper] Converting sparse $candidate"
-    tmp="${candidate}.raw"
-    if command -v simg2img >/dev/null 2>&1; then
-      simg2img "$candidate" "$tmp" && mv "$tmp" "$candidate"
-    fi
-  fi
-done
+            # Convert sparse → raw
+            if [ -f "$candidate" ] && file -b "$candidate" | grep -qi "Android sparse image"; then
+              echo "[wrapper] Converting sparse $candidate"
+              tmp="${candidate}.raw"
+              if command -v simg2img >/dev/null 2>&1; then
+                simg2img "$candidate" "$tmp" && mv "$tmp" "$candidate"
+              fi
+            fi
+          done
 
-# Small delay ensures GitHub Actions registers runtime
-sleep 0.2
+          sleep 0.2 # prevent GitHub "0 seconds" bug
 
-END=$(date +%s)
-echo "[wrapper] Runtime: $((END - START)) sec"
+          END=$(date +%s)
+          echo "[wrapper] Runtime: $((END - START)) sec"
 
-exec "$REAL7Z" "$@"
-EOF
+          exec "$REAL7Z" "$@"
+          EOF
 
           sudo mv /usr/bin/7z /usr/bin/7z.real || true
           sudo mv /tmp/7z-wrapper.sh /usr/local/bin/7z
@@ -97,38 +96,38 @@ EOF
       - name: Create fast download script
         run: |
           cat << 'EOF' > /tmp/fetch.sh
-#!/usr/bin/env bash
-set -e
+          #!/usr/bin/env bash
+          set -e
 
-URL="$1"
-OUT="$2"
+          URL="$1"
+          OUT="$2"
 
-echo "[fetch] Starting fast download: $URL"
-echo "[fetch] Output: $OUT"
+          echo "[fetch] Starting fast download: $URL"
+          echo "[fetch] Output: $OUT"
 
-# First: aria2c turbo mode
-aria2c \
-  -x16 -s16 -j1 \
-  -m10 \
-  -k1M \
-  --console-log-level=warn \
-  --file-allocation=none \
-  -o "$OUT" "$URL" && exit 0
+          # First: aria2c turbo mode
+          aria2c \
+            -x16 -s16 -j1 \
+            -m10 \
+            -k1M \
+            --console-log-level=warn \
+            --file-allocation=none \
+            -o "$OUT" "$URL" && exit 0
 
-echo "[fetch] aria2c failed — switching to curl fallback"
+          echo "[fetch] aria2c failed — switching to curl fallback"
 
-# Second: robust curl with auto-resume + timeout
-curl -L \
-  --retry 10 \
-  --retry-delay 5 \
-  --retry-all-errors \
-  --speed-time 15 \
-  --speed-limit 10000 \
-  -C - \
-  -o "$OUT" "$URL"
+          # Second: robust curl with auto-resume + timeout
+          curl -L \
+            --retry 10 \
+            --retry-delay 5 \
+            --retry-all-errors \
+            --speed-time 15 \
+            --speed-limit 10000 \
+            -C - \
+            -o "$OUT" "$URL"
 
-echo "[fetch] Download complete."
-EOF
+          echo "[fetch] Download complete."
+          EOF
 
           chmod +x /tmp/fetch.sh
 
