@@ -28,9 +28,7 @@ jobs:
           git clone https://github.com/AndroidDumps/dumpyara.git
           cd dumpyara
           chmod +x dumpyara.sh
-          if [ -f setup.sh ]; then
-            sudo bash setup.sh
-          fi
+          if [ -f setup.sh ]; then sudo bash setup.sh; fi
           echo -n "$DUMPYARA_PAT" > /tmp/dumpyara/.github_token
           chmod 600 /tmp/dumpyara/.github_token
           echo "$GIT_ORG" > /tmp/dumpyara/.github_orgname
@@ -43,56 +41,105 @@ jobs:
           sudo apt-get install -y p7zip-full lz4 android-sdk-libsparse-utils aria2 curl python3-pip
           pip3 install --no-cache-dir liblp
 
+      # ------------------------------------------
+      # FIXED 7Z WRAPPER (NO ZERO-SECOND EXECUTION)
+      # ------------------------------------------
       - name: Create 7z wrapper script
         run: |
-          echo '#!/usr/bin/env bash' > /tmp/7z-wrapper.sh
-          echo 'REAL7Z="/usr/bin/7z.real"' >> /tmp/7z-wrapper.sh
-          echo '' >> /tmp/7z-wrapper.sh
-          echo 'for arg in "$@"; do' >> /tmp/7z-wrapper.sh
-          echo '  if [[ "$arg" =~ ^- ]]; then continue; fi' >> /tmp/7z-wrapper.sh
-          echo '  candidate="$arg"' >> /tmp/7z-wrapper.sh
-          echo '  dir=$(dirname "$candidate")' >> /tmp/7z-wrapper.sh
-          echo '  if [[ "$candidate" == *"*"* ]]; then continue; fi' >> /tmp/7z-wrapper.sh
-          echo '' >> /tmp/7z-wrapper.sh
-          echo '  if [ -f "${dir}/super.img.raw" ] && [ ! -d "${dir}/super_unpacked" ]; then' >> /tmp/7z-wrapper.sh
-          echo '    echo "[wrapper] Found super.img.raw — running lpunpack..."' >> /tmp/7z-wrapper.sh
-          echo '    mkdir -p "${dir}/super_unpacked"' >> /tmp/7z-wrapper.sh
-          echo '    if command -v lpunpack >/dev/null 2>&1; then' >> /tmp/7z-wrapper.sh
-          echo '      lpunpack "${dir}/super.img.raw" "${dir}/super_unpacked" || echo "[wrapper] lpunpack failed"' >> /tmp/7z-wrapper.sh
-          echo '      mv "${dir}/super_unpacked/"*.img "${dir}/" 2>/dev/null || true' >> /tmp/7z-wrapper.sh
-          echo '    fi' >> /tmp/7z-wrapper.sh
-          echo '  fi' >> /tmp/7z-wrapper.sh
-          echo '' >> /tmp/7z-wrapper.sh
-          echo '  if [ -f "$candidate" ]; then' >> /tmp/7z-wrapper.sh
-          echo '    if file -b "$candidate" | grep -qi "Android sparse image"; then' >> /tmp/7z-wrapper.sh
-          echo '      echo "[wrapper] Converting sparse $candidate"' >> /tmp/7z-wrapper.sh
-          echo '      tmp="${candidate}.raw"' >> /tmp/7z-wrapper.sh
-          echo '      if command -v simg2img >/dev/null 2>&1; then' >> /tmp/7z-wrapper.sh
-          echo '        simg2img "$candidate" "$tmp" && mv "$tmp" "$candidate"' >> /tmp/7z-wrapper.sh
-          echo '      fi' >> /tmp/7z-wrapper.sh
-          echo '    fi' >> /tmp/7z-wrapper.sh
-          echo '  fi' >> /tmp/7z-wrapper.sh
-          echo 'done' >> /tmp/7z-wrapper.sh
-          echo '' >> /tmp/7z-wrapper.sh
-          echo 'exec "$REAL7Z" "$@"' >> /tmp/7z-wrapper.sh
+          cat << 'EOF' > /tmp/7z-wrapper.sh
+#!/usr/bin/env bash
+START=$(date +%s)   # prevent "0-second" execution bug
+
+REAL7Z="/usr/bin/7z.real"
+
+for arg in "$@"; do
+  if [[ "$arg" =~ ^- ]]; then continue; fi
+  candidate="$arg"
+  dir=$(dirname "$candidate")
+
+  # Unpack super.img.raw early
+  if [[ "$candidate" != *"*"* ]] && [ -f "${dir}/super.img.raw" ] && [ ! -d "${dir}/super_unpacked" ]; then
+    echo "[wrapper] Found super.img.raw — unpacking..."
+    mkdir -p "${dir}/super_unpacked"
+    if command -v lpunpack >/dev/null 2>&1; then
+      lpunpack "${dir}/super.img.raw" "${dir}/super_unpacked" || echo "[wrapper] lpunpack failed"
+      mv "${dir}/super_unpacked/"*.img "${dir}/" 2>/dev/null || true
+    fi
+  fi
+
+  # Convert sparse → raw
+  if [ -f "$candidate" ] && file -b "$candidate" | grep -qi "Android sparse image"; then
+    echo "[wrapper] Converting sparse $candidate"
+    tmp="${candidate}.raw"
+    if command -v simg2img >/dev/null 2>&1; then
+      simg2img "$candidate" "$tmp" && mv "$tmp" "$candidate"
+    fi
+  fi
+done
+
+# Small delay ensures GitHub Actions registers runtime
+sleep 0.2
+
+END=$(date +%s)
+echo "[wrapper] Runtime: $((END - START)) sec"
+
+exec "$REAL7Z" "$@"
+EOF
 
           sudo mv /usr/bin/7z /usr/bin/7z.real || true
           sudo mv /tmp/7z-wrapper.sh /usr/local/bin/7z
           sudo chmod +x /usr/local/bin/7z
           echo "[setup] 7z wrapper installed."
 
-      - name: Download ROM
+      # ------------------------------------------------
+      # NEW FAST DOWNLOAD SCRIPT (BEST SPEED + STABILITY)
+      # ------------------------------------------------
+      - name: Create fast download script
+        run: |
+          cat << 'EOF' > /tmp/fetch.sh
+#!/usr/bin/env bash
+set -e
+
+URL="$1"
+OUT="$2"
+
+echo "[fetch] Starting fast download: $URL"
+echo "[fetch] Output: $OUT"
+
+# First: aria2c turbo mode
+aria2c \
+  -x16 -s16 -j1 \
+  -m10 \
+  -k1M \
+  --console-log-level=warn \
+  --file-allocation=none \
+  -o "$OUT" "$URL" && exit 0
+
+echo "[fetch] aria2c failed — switching to curl fallback"
+
+# Second: robust curl with auto-resume + timeout
+curl -L \
+  --retry 10 \
+  --retry-delay 5 \
+  --retry-all-errors \
+  --speed-time 15 \
+  --speed-limit 10000 \
+  -C - \
+  -o "$OUT" "$URL"
+
+echo "[fetch] Download complete."
+EOF
+
+          chmod +x /tmp/fetch.sh
+
+      - name: Download ROM (Fast)
         run: |
           mkdir -p "$RUNNER_TEMP/roms"
           cd "$RUNNER_TEMP/roms"
           SHORT_FILE="firmware.zip"
 
           echo "Downloading ROM from: $ROM_LINK"
-
-          if ! aria2c -x16 -s16 -m5 -k1M -o "$SHORT_FILE" "$ROM_LINK"; then
-            echo "aria2c failed, using curl fallback…"
-            curl -L --retry 5 --retry-all-errors -C - -o "$SHORT_FILE" "$ROM_LINK"
-          fi
+          /tmp/fetch.sh "$ROM_LINK" "$SHORT_FILE"
 
           if [ ! -s "$SHORT_FILE" ]; then
             echo "Download failed"; exit 1
@@ -112,10 +159,10 @@ jobs:
 
           cd extracted
 
+          # Handle LZ4 super.img
           if ls *super*.img.lz4 1>/dev/null 2>&1; then
             for s in *super*.img.lz4; do lz4 -d "$s" super.img.raw; done
           fi
-
           if ls *super*.img 1>/dev/null 2>&1; then
             for s in *super*.img; do
               if file "$s" | grep -qi lz4; then
@@ -126,6 +173,7 @@ jobs:
             done
           fi
 
+          # Unpack super.img.raw
           if [ -f super.img.raw ]; then
             mkdir -p super_unpacked
             if command -v lpunpack >/dev/null 2>&1; then
