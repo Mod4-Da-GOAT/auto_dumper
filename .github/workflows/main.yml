@@ -40,62 +40,42 @@ jobs:
       - name: Install extraction & partition tools
         run: |
           sudo apt-get update -y
-          # install p7zip, lz4, simg2img provider, aria2, curl, python3-pip
           sudo apt-get install -y p7zip-full lz4 android-sdk-libsparse-utils aria2 curl python3-pip
-          # liblp provides lpunpack (Python implementation) and a CLI entrypoint
           pip3 install --no-cache-dir liblp
 
-          # Prepare a safe 7z wrapper that will:
-          # - convert Android sparse images (simg2img) before 7z extraction
-          # - detect super.img.raw and run lpunpack to unpack logical partitions before extraction
+          # Prepare 7z wrapper
           set -e
-          if [ -x /usr/bin/7z ]; then
-            sudo mv /usr/bin/7z /usr/bin/7z.real || true
-          fi
-          sudo tee /usr/local/bin/7z >/dev/null <<'BASH'
+          if [ -x /usr/bin/7z ]; then sudo mv /usr/bin/7z /usr/bin/7z.real || true; fi
+          sudo bash -c 'cat > /usr/local/bin/7z << "EOF"
 #!/usr/bin/env bash
 # 7z wrapper to handle Android sparse images and dynamic super.img
-# If a targeted .img is sparse -> convert with simg2img
-# If super.img.raw exists in same dir and partitions not unpacked -> run lpunpack
 REAL7Z="/usr/bin/7z.real"
 
-# find files in args that look like image files
 for arg in "$@"; do
   # skip options
-  if [[ "$arg" =~ ^- ]]; then
-    continue
-  fi
+  if [[ "$arg" =~ ^- ]]; then continue; fi
 
-  # strip any output directory indicators used by 7z (-o...), only handle file names
   candidate="$arg"
-  # If candidate refers to a path that doesn't exist but there's a super.img.raw in the same dir,
-  # try to lpunpack that super.img.raw first.
   dir=$(dirname "$candidate")
-  # if candidate is a pattern like *.img, we cannot detect; skip
-  if [[ "$candidate" == *"*"* ]]; then
-    continue
-  fi
+  if [[ "$candidate" == *"*"* ]]; then continue; fi
 
-  # if there's a super.img.raw in same dir, run lpunpack (once)
+  # lpunpack super.img.raw if present
   if [ -f "${dir}/super.img.raw" ] && [ ! -d "${dir}/super_unpacked" ]; then
     echo "[wrapper] Found super.img.raw in ${dir} — running lpunpack..."
     mkdir -p "${dir}/super_unpacked"
-    # use lpunpack from liblp (the CLI is 'lpunpack')
     if command -v lpunpack >/dev/null 2>&1; then
       lpunpack "${dir}/super.img.raw" "${dir}/super_unpacked" || echo "[wrapper] lpunpack failed (non-fatal)"
-      # move partition images up to same dir so 7z will find them
       mv "${dir}/super_unpacked/"*.img "${dir}/" 2>/dev/null || true
     else
       echo "[wrapper] lpunpack not available"
     fi
   fi
 
-  # if target exists and is file, check if it's Android sparse -> convert
+  # convert sparse images
   if [ -f "$candidate" ]; then
     if file -b "$candidate" | grep -qi "Android sparse image"; then
       echo "[wrapper] Converting sparse image $candidate -> raw using simg2img"
       tmp="${candidate}.raw"
-      # if simg2img exists (from android-sdk-libsparse-utils), use it
       if command -v simg2img >/dev/null 2>&1; then
         simg2img "$candidate" "$tmp" && mv "$tmp" "$candidate" || echo "[wrapper] simg2img failed (non-fatal)"
       else
@@ -105,11 +85,9 @@ for arg in "$@"; do
   fi
 done
 
-# Exec the real 7z with original args
 exec "$REAL7Z" "$@"
-BASH
+EOF'
           sudo chmod +x /usr/local/bin/7z
-          # ensure /usr/local/bin in PATH before /usr/bin (it usually is)
           echo "[setup] 7z wrapper installed."
 
       - name: Download ROM (Fast) with fail-fast
@@ -122,86 +100,52 @@ BASH
             echo "aria2c failed, falling back to curl..."
             curl -L --retry 5 --retry-all-errors -C - -o "$SHORT_FILE" "${ROM_LINK}"
           fi
-
-          # fail-fast if nothing downloaded
-          if [ ! -f "$SHORT_FILE" ]; then
-            echo "ERROR: download failed, no file present."
-            exit 1
-          fi
-          if [ ! -s "$SHORT_FILE" ]; then
-            echo "ERROR: downloaded file is empty."
+          if [ ! -f "$SHORT_FILE" ] || [ ! -s "$SHORT_FILE" ]; then
+            echo "ERROR: download failed or file empty."
             exit 1
           fi
 
-          # If the downloaded file is an archive, try to detect and pre-decompress super.img.lz4 -> super.img.raw
-          # so wrapper/lpunpack can act when Dumpyara runs.
           echo "Inspecting downloaded file type..."
           mime=$(file -b --mime-type "$SHORT_FILE" || true)
           echo "MIME: $mime"
           mkdir -p "$RUNNER_TEMP/roms/extracted"
-          # try unzip/tar to extract any super.img or *.img.lz4
+
           if unzip -t "$SHORT_FILE" >/dev/null 2>&1; then
-            echo "Archive looks like zip — extracting listing and scanning for super/img files..."
             unzip -q "$SHORT_FILE" -d "$RUNNER_TEMP/roms/extracted" || true
+          elif tar -tf "$SHORT_FILE" >/dev/null 2>&1; then
+            tar -xf "$SHORT_FILE" -C "$RUNNER_TEMP/roms/extracted" || true
           else
-            # try tar
-            if tar -tf "$SHORT_FILE" >/dev/null 2>&1; then
-              echo "Archive looks like tar — extracting..."
-              tar -xf "$SHORT_FILE" -C "$RUNNER_TEMP/roms/extracted" || true
-            else
-              echo "Not a zip/tar archive (could be direct image) – placing file in extracted dir for scan."
-              cp "$SHORT_FILE" "$RUNNER_TEMP/roms/extracted/"
-            fi
+            cp "$SHORT_FILE" "$RUNNER_TEMP/roms/extracted/"
           fi
 
-          # scan extracted for super.img or super.img.lz4 and produce super.img.raw if found
           cd "$RUNNER_TEMP/roms/extracted" || exit 0
           if ls *super*.img.lz4 1>/dev/null 2>&1; then
             for s in *super*.img.lz4; do
-              echo "Decompressing $s -> super.img.raw"
               lz4 -d "$s" "super.img.raw" || true
             done
           fi
           if ls *super*.img 1>/dev/null 2>&1; then
             for s in *super*.img; do
-              # if .img is LZ4 compressed, decompress
               if file "$s" | grep -qi lz4; then
-                echo "Decompressing $s -> super.img.raw"
                 lz4 -d "$s" "super.img.raw" || true
               else
-                # copy to super.img.raw for consistency
                 cp "$s" super.img.raw || true
               fi
             done
           fi
-
-          # If we produced super.img.raw, run lpunpack now (this pre-extracts partitions)
           if [ -f super.img.raw ]; then
-            echo "super.img.raw detected — running lpunpack to unpack logical partitions."
             mkdir -p "$RUNNER_TEMP/roms/extracted/super_unpacked"
-            # lpunpack provided by liblp pip package
             if command -v lpunpack >/dev/null 2>&1; then
-              lpunpack super.img.raw "$RUNNER_TEMP/roms/extracted/super_unpacked" || echo "lpunpack failed (continuing)"
-              # move unpacked imgs to extracted root so Dumpyara/wrapper can find them
+              lpunpack super.img.raw "$RUNNER_TEMP/roms/extracted/super_unpacked" || true
               mv "$RUNNER_TEMP/roms/extracted/super_unpacked/"*.img "$RUNNER_TEMP/roms/extracted/" 2>/dev/null || true
-            else
-              echo "lpunpack CLI not found (liblp may not have provided it)."
             fi
           fi
-
-          # Print what we found
-          echo "Files in extracted dir:"
           ls -lah "$RUNNER_TEMP/roms/extracted" || true
-
-          # keep the short input in place for Dumpyara (dump expects a single archive or file path)
-          # nothing more to do here
 
       - name: Run Dumpyara
         run: |
           mkdir -p /tmp/df
           cd /tmp/dumpyara
-          # Run Dumpyara pointing at the downloaded short file; our wrapper + pre-extract step will ensure
-          # dynamic partition (super.img) cases are handled by lpunpack/simg2img before 7z extraction occurs.
           ./dumpyara.sh "$RUNNER_TEMP/roms/firmware.zip" --working-dir /tmp/df || true
 
       - name: Rename output folder based on original filename
