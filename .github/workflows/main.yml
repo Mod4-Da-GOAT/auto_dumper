@@ -43,23 +43,19 @@ jobs:
           sudo apt-get install -y p7zip-full lz4 android-sdk-libsparse-utils aria2 curl python3-pip
           pip3 install --no-cache-dir liblp
 
-          # Prepare 7z wrapper
           set -e
           if [ -x /usr/bin/7z ]; then sudo mv /usr/bin/7z /usr/bin/7z.real || true; fi
+
           sudo bash -c 'cat > /usr/local/bin/7z << "EOF"
 #!/usr/bin/env bash
-# 7z wrapper to handle Android sparse images and dynamic super.img
 REAL7Z="/usr/bin/7z.real"
 
 for arg in "$@"; do
-  # skip options
   if [[ "$arg" =~ ^- ]]; then continue; fi
-
   candidate="$arg"
   dir=$(dirname "$candidate")
   if [[ "$candidate" == *"*"* ]]; then continue; fi
 
-  # lpunpack super.img.raw if present
   if [ -f "${dir}/super.img.raw" ] && [ ! -d "${dir}/super_unpacked" ]; then
     echo "[wrapper] Found super.img.raw in ${dir} — running lpunpack..."
     mkdir -p "${dir}/super_unpacked"
@@ -71,7 +67,6 @@ for arg in "$@"; do
     fi
   fi
 
-  # convert sparse images
   if [ -f "$candidate" ]; then
     if file -b "$candidate" | grep -qi "Android sparse image"; then
       echo "[wrapper] Converting sparse image $candidate -> raw using simg2img"
@@ -100,16 +95,18 @@ EOF'
             echo "aria2c failed, falling back to curl..."
             curl -L --retry 5 --retry-all-errors -C - -o "$SHORT_FILE" "${ROM_LINK}"
           fi
-          if [ ! -f "$SHORT_FILE" ] || [ ! -s "$SHORT_FILE" ]; then
-            echo "ERROR: download failed or file empty."
+          if [ ! -f "$SHORT_FILE" ]; then
+            echo "ERROR: download failed, no file present."
             exit 1
           fi
-
+          if [ ! -s "$SHORT_FILE" ]; then
+            echo "ERROR: downloaded file is empty."
+            exit 1
+          fi
           echo "Inspecting downloaded file type..."
           mime=$(file -b --mime-type "$SHORT_FILE" || true)
           echo "MIME: $mime"
           mkdir -p "$RUNNER_TEMP/roms/extracted"
-
           if unzip -t "$SHORT_FILE" >/dev/null 2>&1; then
             unzip -q "$SHORT_FILE" -d "$RUNNER_TEMP/roms/extracted" || true
           elif tar -tf "$SHORT_FILE" >/dev/null 2>&1; then
@@ -117,7 +114,6 @@ EOF'
           else
             cp "$SHORT_FILE" "$RUNNER_TEMP/roms/extracted/"
           fi
-
           cd "$RUNNER_TEMP/roms/extracted" || exit 0
           if ls *super*.img.lz4 1>/dev/null 2>&1; then
             for s in *super*.img.lz4; do
@@ -136,7 +132,7 @@ EOF'
           if [ -f super.img.raw ]; then
             mkdir -p "$RUNNER_TEMP/roms/extracted/super_unpacked"
             if command -v lpunpack >/dev/null 2>&1; then
-              lpunpack super.img.raw "$RUNNER_TEMP/roms/extracted/super_unpacked" || true
+              lpunpack super.img.raw "$RUNNER_TEMP/roms/extracted/super_unpacked" || echo "lpunpack failed (continuing)"
               mv "$RUNNER_TEMP/roms/extracted/super_unpacked/"*.img "$RUNNER_TEMP/roms/extracted/" 2>/dev/null || true
             fi
           fi
