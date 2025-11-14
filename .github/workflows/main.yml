@@ -39,34 +39,47 @@ jobs:
           echo "$TG_TOKEN" > /tmp/dumpyara/.tg_token
           echo "$CHAT_ID" > /tmp/dumpyara/.tg_chat
 
-      # Install extraction tools for .lz4, .img, and archives
+      # Install extraction tools
       - name: Install Extraction Tools
         run: |
           sudo apt-get update
           sudo apt-get install -y p7zip-full lz4 android-sdk-libsparse-utils aria2 curl
 
-      # Download ROM with a fixed short filename
+      # Download ROM with fail-fast checks
       - name: Download ROM (Fast & Safe Name)
         run: |
           mkdir -p $RUNNER_TEMP/roms
           cd $RUNNER_TEMP/roms
           SHORT_FILE="firmware.zip"
+
           echo "🔽 Downloading ROM from ${ROM_LINK} using aria2c..."
           if ! aria2c -x16 -s16 -m5 -k1M -o "$SHORT_FILE" "${ROM_LINK}"; then
             echo "⚠️ aria2c failed, falling back to curl..."
             curl -L --retry 5 --retry-all-errors -C - -o "$SHORT_FILE" "${ROM_LINK}"
           fi
+
+          echo "Checking if file downloaded successfully..."
+          if [ ! -f "$SHORT_FILE" ]; then
+            echo "❌ ERROR: No file downloaded."
+            exit 1
+          fi
+
+          if [ ! -s "$SHORT_FILE" ]; then
+            echo "❌ ERROR: Downloaded file is empty (0 bytes)."
+            exit 1
+          fi
+
           echo "✅ Download complete: $PWD/$SHORT_FILE"
           ls -lh "$SHORT_FILE"
 
-      # Run Dumpyara directly on the downloaded firmware
+      # Run Dumpyara
       - name: Dump Firmware
         run: |
           mkdir -p /tmp/df
           cd /tmp/dumpyara
           ./dumpyara.sh "$RUNNER_TEMP/roms/firmware.zip" --working-dir /tmp/df || true
 
-      # Rename output folder to match original firmware name
+      # Rename output folder based on original filename
       - name: Rename Output Folder
         run: |
           cd /tmp/df
@@ -75,14 +88,15 @@ jobs:
             mv output "${ORIG_NAME%.zip}" || true
           fi
 
-      # Upload Dumpyara output
+      # Upload output
       - name: Upload Dump
         uses: actions/upload-artifact@v4
         with:
           name: dump-output
           path: /tmp/df/*
 
-      # Clean up temp files
+      # Cleanup
       - name: Cleanup
         run: |
           sudo rm -rf /tmp/dumpyara $RUNNER_TEMP/roms /tmp/df ~/.cache || true
+
