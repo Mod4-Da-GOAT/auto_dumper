@@ -43,46 +43,41 @@ jobs:
           sudo apt-get install -y p7zip-full lz4 android-sdk-libsparse-utils aria2 curl python3-pip
           pip3 install --no-cache-dir liblp
 
-          set -e
-          if [ -x /usr/bin/7z ]; then
-            sudo mv /usr/bin/7z /usr/bin/7z.real || true
-          fi
+      - name: Create 7z wrapper script
+        run: |
+          echo '#!/usr/bin/env bash' > /tmp/7z-wrapper.sh
+          echo 'REAL7Z="/usr/bin/7z.real"' >> /tmp/7z-wrapper.sh
+          echo '' >> /tmp/7z-wrapper.sh
+          echo 'for arg in "$@"; do' >> /tmp/7z-wrapper.sh
+          echo '  if [[ "$arg" =~ ^- ]]; then continue; fi' >> /tmp/7z-wrapper.sh
+          echo '  candidate="$arg"' >> /tmp/7z-wrapper.sh
+          echo '  dir=$(dirname "$candidate")' >> /tmp/7z-wrapper.sh
+          echo '  if [[ "$candidate" == *"*"* ]]; then continue; fi' >> /tmp/7z-wrapper.sh
+          echo '' >> /tmp/7z-wrapper.sh
+          echo '  if [ -f "${dir}/super.img.raw" ] && [ ! -d "${dir}/super_unpacked" ]; then' >> /tmp/7z-wrapper.sh
+          echo '    echo "[wrapper] Found super.img.raw — running lpunpack..."' >> /tmp/7z-wrapper.sh
+          echo '    mkdir -p "${dir}/super_unpacked"' >> /tmp/7z-wrapper.sh
+          echo '    if command -v lpunpack >/dev/null 2>&1; then' >> /tmp/7z-wrapper.sh
+          echo '      lpunpack "${dir}/super.img.raw" "${dir}/super_unpacked" || echo "[wrapper] lpunpack failed"' >> /tmp/7z-wrapper.sh
+          echo '      mv "${dir}/super_unpacked/"*.img "${dir}/" 2>/dev/null || true' >> /tmp/7z-wrapper.sh
+          echo '    fi' >> /tmp/7z-wrapper.sh
+          echo '  fi' >> /tmp/7z-wrapper.sh
+          echo '' >> /tmp/7z-wrapper.sh
+          echo '  if [ -f "$candidate" ]; then' >> /tmp/7z-wrapper.sh
+          echo '    if file -b "$candidate" | grep -qi "Android sparse image"; then' >> /tmp/7z-wrapper.sh
+          echo '      echo "[wrapper] Converting sparse $candidate"' >> /tmp/7z-wrapper.sh
+          echo '      tmp="${candidate}.raw"' >> /tmp/7z-wrapper.sh
+          echo '      if command -v simg2img >/dev/null 2>&1; then' >> /tmp/7z-wrapper.sh
+          echo '        simg2img "$candidate" "$tmp" && mv "$tmp" "$candidate"' >> /tmp/7z-wrapper.sh
+          echo '      fi' >> /tmp/7z-wrapper.sh
+          echo '    fi' >> /tmp/7z-wrapper.sh
+          echo '  fi' >> /tmp/7z-wrapper.sh
+          echo 'done' >> /tmp/7z-wrapper.sh
+          echo '' >> /tmp/7z-wrapper.sh
+          echo 'exec "$REAL7Z" "$@"' >> /tmp/7z-wrapper.sh
 
-          sudo tee /usr/local/bin/7z >/dev/null <<'BASH'
-#!/usr/bin/env bash
-REAL7Z="/usr/bin/7z.real"
-
-for arg in "$@"; do
-  if [[ "$arg" =~ ^- ]]; then continue; fi
-
-  candidate="$arg"
-  dir=$(dirname "$candidate")
-
-  if [[ "$candidate" == *"*"* ]]; then continue; fi
-
-  if [ -f "${dir}/super.img.raw" ] && [ ! -d "${dir}/super_unpacked" ]; then
-    echo "[wrapper] Found super.img.raw — running lpunpack..."
-    mkdir -p "${dir}/super_unpacked"
-    if command -v lpunpack >/dev/null 2>&1; then
-      lpunpack "${dir}/super.img.raw" "${dir}/super_unpacked" || echo "[wrapper] lpunpack failed"
-      mv "${dir}/super_unpacked/"*.img "${dir}/" 2>/dev/null || true
-    fi
-  fi
-
-  if [ -f "$candidate" ]; then
-    if file -b "$candidate" | grep -qi "Android sparse image"; then
-      echo "[wrapper] Converting sparse image $candidate"
-      tmp="${candidate}.raw"
-      if command -v simg2img >/dev/null 2>&1; then
-        simg2img "$candidate" "$tmp" && mv "$tmp" "$candidate"
-      fi
-    fi
-  fi
-done
-
-exec "$REAL7Z" "$@"
-BASH
-
+          sudo mv /usr/bin/7z /usr/bin/7z.real || true
+          sudo mv /tmp/7z-wrapper.sh /usr/local/bin/7z
           sudo chmod +x /usr/local/bin/7z
           echo "[setup] 7z wrapper installed."
 
@@ -95,7 +90,7 @@ BASH
           echo "Downloading ROM from: $ROM_LINK"
 
           if ! aria2c -x16 -s16 -m5 -k1M -o "$SHORT_FILE" "$ROM_LINK"; then
-            echo "aria2c failed; falling back to curl..."
+            echo "aria2c failed, using curl fallback…"
             curl -L --retry 5 --retry-all-errors -C - -o "$SHORT_FILE" "$ROM_LINK"
           fi
 
@@ -116,6 +111,7 @@ BASH
           fi
 
           cd extracted
+
           if ls *super*.img.lz4 1>/dev/null 2>&1; then
             for s in *super*.img.lz4; do lz4 -d "$s" super.img.raw; done
           fi
