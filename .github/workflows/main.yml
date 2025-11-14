@@ -1,9 +1,9 @@
-name: Dump Firmware CI (Printf - Full, no 7z)
+name: Dump Firmware CI (Printf - AP support, no 7z wrapper)
 on:
   workflow_dispatch:
     inputs:
       ROM_LINK:
-        description: "Direct URL of ROM/Firmware"
+        description: "Direct URL of ROM/Firmware (zip / ap / tar / payload.bin)"
         required: true
 
 env:
@@ -48,8 +48,7 @@ jobs:
           '#!/usr/bin/env bash' \
           'set -euo pipefail' \
           'sudo apt-get update -y' \
-          'sudo apt-get install -y p7zip-full lz4 android-sdk-libsparse-utils aria2 curl python3-pip unzip' \
-          '# Ensure simg2img and lpunpack (android sparse tools) are available via android-sdk-libsparse-utils' \
+          'sudo apt-get install -y p7zip-full lz4 android-sdk-libsparse-utils aria2 curl python3-pip unzip bsdtar' \
           'pip3 install --no-cache-dir liblp' \
           > /tmp/install_tools.sh
           chmod +x /tmp/install_tools.sh
@@ -77,42 +76,140 @@ jobs:
           > /tmp/fetch.sh
           chmod +x /tmp/fetch.sh
 
-      - name: Create download_only.sh (printf)
+      - name: Create download_and_prepare.sh
         run: |
           printf '%s\n' \
           '#!/usr/bin/env bash' \
           'set -euo pipefail' \
+          '' \
+          '# Download file to runner temp roms dir' \
           'RUNNER_TEMP_DIR="${RUNNER_TEMP:-/tmp}"' \
           'mkdir -p "$RUNNER_TEMP_DIR/roms"' \
           'cd "$RUNNER_TEMP_DIR/roms"' \
-          'SHORT_FILE="firmware.zip"' \
+          'OUTNAME="firmware.zip"' \
           '' \
-          'echo "Downloading ROM from: $ROM_LINK"' \
-          '/tmp/fetch.sh "$ROM_LINK" "$SHORT_FILE"' \
+          'echo "[dl] Downloading ROM from: $ROM_LINK"' \
+          '/tmp/fetch.sh "$ROM_LINK" "$OUTNAME"' \
           '' \
-          'if [ ! -s "$SHORT_FILE" ]; then' \
-          '  echo "Download failed"; exit 1' \
+          'if [ ! -s "$OUTNAME" ]; then' \
+          '  echo "[dl] Download failed or empty file"; exit 1' \
           'fi' \
           '' \
-          'echo "[download] Saved as: $RUNNER_TEMP_DIR/roms/$SHORT_FILE"' \
-          'ls -lh "$SHORT_FILE"' \
-          > /tmp/download_only.sh
-          chmod +x /tmp/download_only.sh
-          /tmp/download_only.sh
+          '# Detect extension and attempt to normalize to firmware.zip when possible' \
+          'lower=$(echo "$OUTNAME" | tr \"[:upper:]\" \"[:lower:]\")' \
+          'echo "[dl] Saved file: $RUNNER_TEMP_DIR/roms/$OUTNAME"' \
+          'ls -lh "$OUTNAME"' \
+          '' \
+          '# If file appears to be .ap (Samsung/AP packages, or vendor .ap), try extract' \
+          'if file "$OUTNAME" | grep -qi \"Zip archive\" || file "$OUTNAME" | grep -qi \"Android sparse image\" || file "$OUTNAME" | grep -qi \"XZ compressed data\" || file "$OUTNAME" | grep -qi \"bzip2\"; then' \
+          '  echo "[dl] Looks like a normal archive or image ($OUTNAME) - keeping as is"' \
+          'else' \
+          '  echo "[dl] Checking for .ap extension or unknown container"' \
+          'fi' \
+          '' \
+          '# Try to handle .ap specially: some vendors use .ap as an archive/container' \
+          'if echo "$OUTNAME" | grep -qi \"\\.ap$\" || file "$OUTNAME" | grep -qi \"Android Package\" 1>/dev/null 2>&1; then' \
+          '  echo \"[dl] Detected .ap container - attempting extraction with multiple tools\"' \
+          '  mkdir -p ./ap_extract' \
+          '  extracted=false' \
+          '  # try 7z' \
+          '  if command -v 7z >/dev/null 2>&1; then' \
+          '    echo \"[dl] trying 7z x\"' \
+          '    if 7z x -y "$OUTNAME" -o./ap_extract >/dev/null 2>&1; then' \
+          '      extracted=true' \
+          '    fi' \
+          '  fi' \
+          '  # try unzip' \
+          '  if [ \"$extracted\" = false ]; then' \
+          '    echo \"[dl] trying unzip\"' \
+          '    if unzip -q "$OUTNAME" -d ./ap_extract >/dev/null 2>&1; then' \
+          '      extracted=true' \
+          '    fi' \
+          '  fi' \
+          '  # try bsdtar (tar auto-detect)' \
+          '  if [ \"$extracted\" = false ] && command -v bsdtar >/dev/null 2>&1; then' \
+          '    echo \"[dl] trying bsdtar -xf\"' \
+          '    if bsdtar -xf "$OUTNAME" -C ./ap_extract >/dev/null 2>&1; then' \
+          '      extracted=true' \
+          '    fi' \
+          '  fi' \
+          '' \
+          '  if [ \"$extracted\" = true ]; then' \
+          '    echo \"[dl] extraction of .ap succeeded; listing ap_extract:\"' \
+          '    ls -lah ap_extract || true' \
+          '    # If super.img found, copy it beside firmware.zip for later tools' \
+          '    if ls ap_extract/*super*.img* 1>/dev/null 2>&1; then' \
+          '      echo \"[dl] Found super.img inside .ap. Copying to working area as super.img\"' \
+          '      cp ap_extract/*super*.img* ./super.img || true' \
+          '    fi' \
+          '    # If payload.bin found, copy it' \
+          '    if ls ap_extract/*payload* 1>/dev/null 2>&1; then' \
+          '      cp ap_extract/*payload* ./payload.bin || true' \
+          '    fi' \
+          '  else' \
+          '    echo \"[dl] .ap extraction attempts failed - will keep original file and let dumpyara attempt extraction\"' \
+          '  fi' \
+          'fi' \
+          '' \
+          'echo \"[dl] download_and_prepare finished\"' \
+          'ls -lah' \
+          > /tmp/download_and_prepare.sh
+          chmod +x /tmp/download_and_prepare.sh
+          /tmp/download_and_prepare.sh
 
-      - name: Create run_dumpyara.sh (printf)
+      - name: Create prepare_dumpyara_workdir.sh
         run: |
           printf '%s\n' \
           '#!/usr/bin/env bash' \
           'set -euo pipefail' \
-          'echo "[dumpyara] Preparing to run Dumpyara on original ZIP"' \
+          '' \
+          '# Create Dumpyara working directory where Dumpyara expects token files' \
+          'BASE_NAME=$(basename "$ROM_LINK" | cut -d\"?\" -f1)' \
+          'BASE_NAME=${BASE_NAME%.zip}' \
+          'WORKING_DIR="/tmp/dumpyara/working/${BASE_NAME}"' \
+          'mkdir -p "$WORKING_DIR"' \
+          '' \
+          '# Write expected token files into Dumpyara working directory' \
+          'if [ -n "${TG_TOKEN:-}" ]; then echo -n "$TG_TOKEN" > "$WORKING_DIR/.tgtoken" || true; fi' \
+          'if [ -n "${DUMPYARA_PAT:-}" ]; then echo -n "$DUMPYARA_PAT" > "$WORKING_DIR/.github_token" || true; fi' \
+          'if [ -n "${GIT_ORG:-}" ]; then echo -n "$GIT_ORG" > "$WORKING_DIR/.github_orgname" || true; fi' \
+          'if [ -n "${TG_TOKEN:-}" ]; then echo -n "$CHAT_ID" > "$WORKING_DIR/.tg_chat" || true; fi' \
+          '' \
+          'chmod 600 "$WORKING_DIR/.github_token" 2>/dev/null || true' \
+          'echo "[prep] Dumpyara working directory prepared: $WORKING_DIR"' \
+          'ls -lah "$WORKING_DIR" || true' \
+          > /tmp/prepare_dumpyara_workdir.sh
+          chmod +x /tmp/prepare_dumpyara_workdir.sh
+          /tmp/prepare_dumpyara_workdir.sh
+
+      - name: Create run_dumpyara.sh (writes tokens into working dir and runs on original ZIP)
+        run: |
+          printf '%s\n' \
+          '#!/usr/bin/env bash' \
+          'set -euo pipefail' \
+          'echo "[dumpyara] Starting dumpyara run (will use original ZIP)"' \
           'mkdir -p /tmp/df' \
           'cd /tmp/dumpyara' \
-          'echo "[dumpyara] Tools available:"' \
-          'command -v simg2img || echo "simg2img not found"' \
-          'command -v lpunpack || echo "lpunpack not found"' \
-          'echo "[dumpyara] Executing: ./dumpyara.sh \"$RUNNER_TEMP/roms/firmware.zip\" --working-dir /tmp/df"' \
+          'BASE_NAME=$(basename "$ROM_LINK" | cut -d\"?\" -f1)' \
+          'BASE_NAME=${BASE_NAME%.zip}' \
+          'WORKING_DIR="/tmp/dumpyara/working/${BASE_NAME}"' \
+          'echo "[dumpyara] Working dir to be used: $WORKING_DIR"' \
+          'if [ ! -d "$WORKING_DIR" ]; then mkdir -p "$WORKING_DIR"; fi' \
+          '' \
+          '# Ensure tokens exist in working dir (redundant but safe)' \
+          'if [ -n "${TG_TOKEN:-}" ]; then echo -n "$TG_TOKEN" > "$WORKING_DIR/.tgtoken" || true; fi' \
+          'if [ -n "${DUMPYARA_PAT:-}" ]; then echo -n "$DUMPYARA_PAT" > "$WORKING_DIR/.github_token" || true; fi' \
+          'if [ -n "${GIT_ORG:-}" ]; then echo -n "$GIT_ORG" > "$WORKING_DIR/.github_orgname" || true; fi' \
+          'if [ -n "${CHAT_ID:-}" ]; then echo -n "$CHAT_ID" > "$WORKING_DIR/.tg_chat" || true; fi' \
+          'chmod 600 "$WORKING_DIR/.github_token" 2>/dev/null || true' \
+          '' \
+          'echo "[dumpyara] Listing working dir before run:"' \
+          'ls -lah "$WORKING_DIR" || true' \
+          '' \
+          'echo "[dumpyara] Running: ./dumpyara.sh \"$RUNNER_TEMP/roms/firmware.zip\" --working-dir /tmp/df"' \
           './dumpyara.sh "$RUNNER_TEMP/roms/firmware.zip" --working-dir /tmp/df || true' \
+          '' \
+          'echo "[dumpyara] done"' \
           > /tmp/run_dumpyara.sh
           chmod +x /tmp/run_dumpyara.sh
           /tmp/run_dumpyara.sh
@@ -123,9 +220,9 @@ jobs:
           '#!/usr/bin/env bash' \
           'set -euo pipefail' \
           'cd /tmp/df' \
-          'ORIG_NAME=$(basename "$ROM_LINK" | cut -d"?" -f1)' \
+          'ORIG_NAME=$(basename "$ROM_LINK" | cut -d\"?\" -f1)' \
           'if [ -d output ]; then' \
-          '  mv output "${ORIG_NAME%.zip}"' \
+          '  mv output \"${ORIG_NAME%.zip}\"' \
           'fi' \
           > /tmp/rename_output.sh
           chmod +x /tmp/rename_output.sh
@@ -142,7 +239,7 @@ jobs:
           printf '%s\n' \
           '#!/usr/bin/env bash' \
           'set -euo pipefail' \
-          'sudo rm -rf /tmp/dumpyara "${RUNNER_TEMP:-/tmp}/roms" /tmp/df ~/.cache || true' \
+          'sudo rm -rf /tmp/dumpyara \"${RUNNER_TEMP:-/tmp}/roms\" /tmp/df ~/.cache || true' \
           > /tmp/cleanup.sh
           chmod +x /tmp/cleanup.sh
           /tmp/cleanup.sh
