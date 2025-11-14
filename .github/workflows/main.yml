@@ -1,5 +1,4 @@
-name: Dump Firmware CI
-
+name: Dump Firmware CI (Printf - Full)
 on:
   workflow_dispatch:
     inputs:
@@ -22,181 +21,219 @@ jobs:
       - name: Free Disk Space
         uses: rokibhasansagar/slimhub_actions@main
 
-      - name: Clone Dumpyara
+      - name: Create clone_dumpyara.sh (printf)
         run: |
-          cd /tmp
-          git clone https://github.com/AndroidDumps/dumpyara.git
-          cd dumpyara
-          chmod +x dumpyara.sh
-          if [ -f setup.sh ]; then sudo bash setup.sh; fi
-          echo -n "$DUMPYARA_PAT" > /tmp/dumpyara/.github_token
-          chmod 600 /tmp/dumpyara/.github_token
-          echo "$GIT_ORG" > /tmp/dumpyara/.github_orgname
-          echo "$TG_TOKEN" > /tmp/dumpyara/.tg_token
-          echo "$CHAT_ID" > /tmp/dumpyara/.tg_chat
+          printf '%s\n' \
+          '#!/usr/bin/env bash' \
+          'set -euo pipefail' \
+          'cd /tmp' \
+          'if [ -d /tmp/dumpyara ]; then rm -rf /tmp/dumpyara || true; fi' \
+          'git clone https://github.com/AndroidDumps/dumpyara.git' \
+          'cd dumpyara' \
+          'chmod +x dumpyara.sh || true' \
+          'if [ -f setup.sh ]; then sudo bash setup.sh; fi' \
+          'mkdir -p /tmp/dumpyara' \
+          'echo -n "$DUMPYARA_PAT" > /tmp/dumpyara/.github_token' \
+          'chmod 600 /tmp/dumpyara/.github_token || true' \
+          'echo "$GIT_ORG" > /tmp/dumpyara/.github_orgname' \
+          'echo "$TG_TOKEN" > /tmp/dumpyara/.tg_token' \
+          'echo "$CHAT_ID" > /tmp/dumpyara/.tg_chat' \
+          > /tmp/clone_dumpyara.sh
+          chmod +x /tmp/clone_dumpyara.sh
+          /tmp/clone_dumpyara.sh
 
-      - name: Install extraction & partition tools
+      - name: Create install_tools.sh (printf)
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y p7zip-full lz4 android-sdk-libsparse-utils aria2 curl python3-pip
-          pip3 install --no-cache-dir liblp
+          printf '%s\n' \
+          '#!/usr/bin/env bash' \
+          'set -euo pipefail' \
+          'sudo apt-get update -y' \
+          'sudo apt-get install -y p7zip-full lz4 android-sdk-libsparse-utils aria2 curl python3-pip unzip' \
+          'pip3 install --no-cache-dir liblp' \
+          > /tmp/install_tools.sh
+          chmod +x /tmp/install_tools.sh
+          /tmp/install_tools.sh
 
-      # ------------------------------------------
-      # FIXED 7Z WRAPPER (NO ZERO-SECOND EXECUTION)
-      # ------------------------------------------
-      - name: Create 7z wrapper script
+      - name: Create 7z wrapper (printf)
         run: |
-          cat << 'EOF' > /tmp/7z-wrapper.sh
-          #!/usr/bin/env bash
-          START=$(date +%s)
-
-          REAL7Z="/usr/bin/7z.real"
-
-          for arg in "$@"; do
-            if [[ "$arg" =~ ^- ]]; then continue; fi
-            candidate="$arg"
-            dir=$(dirname "$candidate")
-
-            # Unpack super.img.raw early
-            if [[ "$candidate" != *"*"* ]] && [ -f "${dir}/super.img.raw" ] && [ ! -d "${dir}/super_unpacked" ]; then
-              echo "[wrapper] Found super.img.raw — unpacking..."
-              mkdir -p "${dir}/super_unpacked"
-              if command -v lpunpack >/dev/null 2>&1; then
-                lpunpack "${dir}/super.img.raw" "${dir}/super_unpacked" || echo "[wrapper] lpunpack failed"
-                mv "${dir}/super_unpacked/"*.img "${dir}/" 2>/dev/null || true
-              fi
-            fi
-
-            # Convert sparse → raw
-            if [ -f "$candidate" ] && file -b "$candidate" | grep -qi "Android sparse image"; then
-              echo "[wrapper] Converting sparse $candidate"
-              tmp="${candidate}.raw"
-              if command -v simg2img >/dev/null 2>&1; then
-                simg2img "$candidate" "$tmp" && mv "$tmp" "$candidate"
-              fi
-            fi
-          done
-
-          sleep 0.2 # prevent GitHub "0 seconds" bug
-
-          END=$(date +%s)
-          echo "[wrapper] Runtime: $((END - START)) sec"
-
-          exec "$REAL7Z" "$@"
-          EOF
-
+          printf '%s\n' \
+          '#!/usr/bin/env bash' \
+          'set -euo pipefail' \
+          'START=$(date +%s)' \
+          'REAL7Z="/usr/bin/7z.real"' \
+          '' \
+          'for arg in "$@"; do' \
+          '  if [[ "$arg" =~ ^- ]]; then continue; fi' \
+          '  candidate="$arg"' \
+          '  dir=$(dirname "$candidate")' \
+          '' \
+          '  if [[ "$candidate" != *"*"* ]] && [ -f "${dir}/super.img.raw" ] && [ ! -d "${dir}/super_unpacked" ]; then' \
+          '    echo "[wrapper] Found super.img.raw - unpacking..."' \
+          '    mkdir -p "${dir}/super_unpacked"' \
+          '    if command -v lpunpack >/dev/null 2>&1; then' \
+          '      lpunpack "${dir}/super.img.raw" "${dir}/super_unpacked" || echo "[wrapper] lpunpack failed"' \
+          '      mv "${dir}/super_unpacked/"*.img "${dir}/" 2>/dev/null || true' \
+          '    fi' \
+          '  fi' \
+          '' \
+          '  if [ -f "$candidate" ] && file -b "$candidate" | grep -qi "Android sparse image"; then' \
+          '    echo "[wrapper] Converting sparse $candidate"' \
+          '    tmp="${candidate}.raw"' \
+          '    if command -v simg2img >/dev/null 2>&1; then' \
+          '      simg2img "$candidate" "$tmp" && mv "$tmp" "$candidate" || true' \
+          '    fi' \
+          '  fi' \
+          'done' \
+          '' \
+          'sleep 0.2' \
+          'END=$(date +%s)' \
+          'echo "[wrapper] Runtime: $((END - START)) sec"' \
+          '' \
+          'exec "$REAL7Z" "$@"' \
+          > /tmp/7z-wrapper.sh
+          chmod +x /tmp/7z-wrapper.sh
           sudo mv /usr/bin/7z /usr/bin/7z.real || true
           sudo mv /tmp/7z-wrapper.sh /usr/local/bin/7z
           sudo chmod +x /usr/local/bin/7z
           echo "[setup] 7z wrapper installed."
 
-      # ------------------------------------------------
-      # NEW FAST DOWNLOAD SCRIPT (BEST SPEED + STABILITY)
-      # ------------------------------------------------
-      - name: Create fast download script
+      - name: Create fetch.sh (printf)
         run: |
-          cat << 'EOF' > /tmp/fetch.sh
-          #!/usr/bin/env bash
-          set -e
-
-          URL="$1"
-          OUT="$2"
-
-          echo "[fetch] Starting fast download: $URL"
-          echo "[fetch] Output: $OUT"
-
-          # First: aria2c turbo mode
-          aria2c \
-            -x16 -s16 -j1 \
-            -m10 \
-            -k1M \
-            --console-log-level=warn \
-            --file-allocation=none \
-            -o "$OUT" "$URL" && exit 0
-
-          echo "[fetch] aria2c failed — switching to curl fallback"
-
-          # Second: robust curl with auto-resume + timeout
-          curl -L \
-            --retry 10 \
-            --retry-delay 5 \
-            --retry-all-errors \
-            --speed-time 15 \
-            --speed-limit 10000 \
-            -C - \
-            -o "$OUT" "$URL"
-
-          echo "[fetch] Download complete."
-          EOF
-
+          printf '%s\n' \
+          '#!/usr/bin/env bash' \
+          'set -euo pipefail' \
+          'URL="$1"' \
+          'OUT="$2"' \
+          'echo "[fetch] Input URL: $URL"' \
+          'REAL_URL=$(curl -L -s -o /dev/null -w "%{url_effective}" "$URL" || echo "$URL")' \
+          'echo "[fetch] Final resolved URL: $REAL_URL"' \
+          'echo "[fetch] Downloading to: $OUT"' \
+          '' \
+          '# Try aria2c first' \
+          'aria2c -x16 -s16 -j1 -m10 -k1M --console-log-level=warn --file-allocation=none -o "$OUT" "$REAL_URL" && exit 0' \
+          '' \
+          'echo "[fetch] aria2c failed - switching to curl fallback."' \
+          '' \
+          'curl -L --retry 10 --retry-delay 5 --retry-all-errors --speed-time 15 --speed-limit 10000 -C - -o "$OUT" "$REAL_URL"' \
+          '' \
+          'echo "[fetch] Download complete."' \
+          > /tmp/fetch.sh
           chmod +x /tmp/fetch.sh
 
-      - name: Download ROM (Fast)
+      - name: Create download_and_extract.sh (printf)
         run: |
-          mkdir -p "$RUNNER_TEMP/roms"
-          cd "$RUNNER_TEMP/roms"
-          SHORT_FILE="firmware.zip"
+          printf '%s\n' \
+          '#!/usr/bin/env bash' \
+          'set -euo pipefail' \
+          '' \
+          'RUNNER_TEMP_DIR="${RUNNER_TEMP:-/tmp}"' \
+          'mkdir -p "$RUNNER_TEMP_DIR/roms"' \
+          'cd "$RUNNER_TEMP_DIR/roms"' \
+          'SHORT_FILE="firmware.zip"' \
+          '' \
+          'echo "Downloading ROM from: $ROM_LINK"' \
+          '/tmp/fetch.sh "$ROM_LINK" "$SHORT_FILE"' \
+          '' \
+          'if [ ! -s "$SHORT_FILE" ]; then' \
+          '  echo "Download failed"; exit 1' \
+          'fi' \
+          '' \
+          'EXTRACT_DIR="$RUNNER_TEMP_DIR/roms/extracted"' \
+          'rm -rf "$EXTRACT_DIR"' \
+          'mkdir -p "$EXTRACT_DIR"' \
+          '' \
+          'mime=$(file -b --mime-type "$SHORT_FILE" || true)' \
+          'echo "[extract] MIME: $mime"' \
+          '' \
+          'if unzip -t "$SHORT_FILE" >/dev/null 2>&1; then' \
+          '  echo "[extract] Detected zip - extracting"' \
+          '  unzip -q "$SHORT_FILE" -d "$EXTRACT_DIR"' \
+          'elif tar -tf "$SHORT_FILE" >/dev/null 2>&1; then' \
+          '  echo "[extract] Detected tar - extracting"' \
+          '  tar -xf "$SHORT_FILE" -C "$EXTRACT_DIR"' \
+          'else' \
+          '  echo "[extract] Not archive - copying single file"' \
+          '  cp "$SHORT_FILE" "$EXTRACT_DIR/"' \
+          'fi' \
+          '' \
+          'cd "$EXTRACT_DIR"' \
+          '' \
+          '# Decompress LZ4 super images' \
+          'if ls *super*.img.lz4 1>/dev/null 2>&1; then' \
+          '  for s in *super*.img.lz4; do' \
+          '    echo "[extract] Decompressing LZ4: $s"' \
+          '    lz4 -d "$s" "${s%.lz4}.raw" || true' \
+          '  done' \
+          'fi' \
+          '' \
+          '# Handle super.img variants (LZ4 or sparse) and produce super.img.raw' \
+          'if ls *super*.img 1>/dev/null 2>&1; then' \
+          '  for s in *super*.img; do' \
+          '    echo "[extract] Found candidate: $s"' \
+          '    if file "$s" | grep -qi lz4; then' \
+          '      lz4 -d "$s" "${s}.raw" && mv "${s}.raw" super.img.raw || true' \
+          '    elif file "$s" | grep -qi "Android sparse image"; then' \
+          '      if command -v simg2img >/dev/null 2>&1; then' \
+          '        simg2img "$s" "${s}.raw" && mv "${s}.raw" super.img.raw || true' \
+          '      fi' \
+          '    else' \
+          '      cp -f "$s" super.img.raw || true' \
+          '    fi' \
+          '  done' \
+          'fi' \
+          '' \
+          '# If super.img.raw exists, try lpunpack' \
+          'if [ -f super.img.raw ]; then' \
+          '  echo "[extract] super.img.raw present - attempting lpunpack"' \
+          '  mkdir -p super_unpacked' \
+          '  if command -v lpunpack >/dev/null 2>&1; then' \
+          '    lpunpack super.img.raw super_unpacked || true' \
+          '    mv super_unpacked/*.img . 2>/dev/null || true' \
+          '  fi' \
+          'fi' \
+          '' \
+          '# Convert internal sparse images' \
+          'find . -type f -name "*.img" -print0 | while IFS= read -r -d '' f; do' \
+          '  if file "$f" | grep -qi "Android sparse image"; then' \
+          '    echo "[extract] Converting sparse inside tree: $f"' \
+          '    if command -v simg2img >/dev/null 2>&1; then' \
+          '      simg2img "$f" "${f}.raw" && mv "${f}.raw" "$f" || true' \
+          '    fi' \
+          '  fi' \
+          'done || true' \
+          '' \
+          'echo "[extract] Final extracted files:"' \
+          'ls -lah' \
+          > /tmp/download_and_extract.sh
+          chmod +x /tmp/download_and_extract.sh
+          /tmp/download_and_extract.sh
 
-          echo "Downloading ROM from: $ROM_LINK"
-          /tmp/fetch.sh "$ROM_LINK" "$SHORT_FILE"
-
-          if [ ! -s "$SHORT_FILE" ]; then
-            echo "Download failed"; exit 1
-          fi
-
-          mkdir -p extracted
-          mime=$(file -b --mime-type "$SHORT_FILE" || true)
-          echo "MIME: $mime"
-
-          if unzip -t "$SHORT_FILE" >/dev/null 2>&1; then
-            unzip -q "$SHORT_FILE" -d extracted
-          elif tar -tf "$SHORT_FILE" >/dev/null 2>&1; then
-            tar -xf "$SHORT_FILE" -C extracted
-          else
-            cp "$SHORT_FILE" extracted/
-          fi
-
-          cd extracted
-
-          # Handle LZ4 super.img
-          if ls *super*.img.lz4 1>/dev/null 2>&1; then
-            for s in *super*.img.lz4; do lz4 -d "$s" super.img.raw; done
-          fi
-          if ls *super*.img 1>/dev/null 2>&1; then
-            for s in *super*.img; do
-              if file "$s" | grep -qi lz4; then
-                lz4 -d "$s" super.img.raw
-              else
-                cp "$s" super.img.raw
-              fi
-            done
-          fi
-
-          # Unpack super.img.raw
-          if [ -f super.img.raw ]; then
-            mkdir -p super_unpacked
-            if command -v lpunpack >/dev/null 2>&1; then
-              lpunpack super.img.raw super_unpacked || true
-              mv super_unpacked/*.img . 2>/dev/null || true
-            fi
-          fi
-
-          echo "Extracted files:"
-          ls -lah
-
-      - name: Run Dumpyara
+      - name: Create run_dumpyara.sh (printf)
         run: |
-          mkdir -p /tmp/df
-          cd /tmp/dumpyara
-          ./dumpyara.sh "$RUNNER_TEMP/roms/firmware.zip" --working-dir /tmp/df || true
+          printf '%s\n' \
+          '#!/usr/bin/env bash' \
+          'set -euo pipefail' \
+          'mkdir -p /tmp/df' \
+          'cd /tmp/dumpyara' \
+          'echo "[dumpyara] Running dumpyara against extracted folder: $RUNNER_TEMP/roms/extracted"' \
+          './dumpyara.sh "$RUNNER_TEMP/roms/extracted" --working-dir /tmp/df || true' \
+          > /tmp/run_dumpyara.sh
+          chmod +x /tmp/run_dumpyara.sh
+          /tmp/run_dumpyara.sh
 
-      - name: Rename output folder
+      - name: Create rename_output.sh (printf)
         run: |
-          cd /tmp/df
-          ORIG_NAME=$(basename "$ROM_LINK" | cut -d'?' -f1)
-          if [ -d output ]; then
-            mv output "${ORIG_NAME%.zip}"
-          fi
+          printf '%s\n' \
+          '#!/usr/bin/env bash' \
+          'set -euo pipefail' \
+          'cd /tmp/df' \
+          'ORIG_NAME=$(basename "$ROM_LINK" | cut -d"?" -f1)' \
+          'if [ -d output ]; then' \
+          '  mv output "${ORIG_NAME%.zip}"' \
+          'fi' \
+          > /tmp/rename_output.sh
+          chmod +x /tmp/rename_output.sh
+          /tmp/rename_output.sh
 
       - name: Upload Dump
         uses: actions/upload-artifact@v4
@@ -204,6 +241,12 @@ jobs:
           name: dump-output
           path: /tmp/df/*
 
-      - name: Cleanup
+      - name: Create cleanup.sh (printf)
         run: |
-          sudo rm -rf /tmp/dumpyara $RUNNER_TEMP/roms /tmp/df ~/.cache || true
+          printf '%s\n' \
+          '#!/usr/bin/env bash' \
+          'set -euo pipefail' \
+          'sudo rm -rf /tmp/dumpyara "${RUNNER_TEMP:-/tmp}/roms" /tmp/df ~/.cache || true' \
+          > /tmp/cleanup.sh
+          chmod +x /tmp/cleanup.sh
+          /tmp/cleanup.sh
