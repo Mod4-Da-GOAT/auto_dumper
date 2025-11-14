@@ -44,99 +44,102 @@ jobs:
           pip3 install --no-cache-dir liblp
 
           set -e
-          if [ -x /usr/bin/7z ]; then sudo mv /usr/bin/7z /usr/bin/7z.real || true; fi
+          if [ -x /usr/bin/7z ]; then
+            sudo mv /usr/bin/7z /usr/bin/7z.real || true
+          fi
 
-          sudo bash -c 'cat > /usr/local/bin/7z << "EOF"
+          sudo tee /usr/local/bin/7z >/dev/null <<'BASH'
 #!/usr/bin/env bash
 REAL7Z="/usr/bin/7z.real"
 
 for arg in "$@"; do
   if [[ "$arg" =~ ^- ]]; then continue; fi
+
   candidate="$arg"
   dir=$(dirname "$candidate")
+
   if [[ "$candidate" == *"*"* ]]; then continue; fi
 
   if [ -f "${dir}/super.img.raw" ] && [ ! -d "${dir}/super_unpacked" ]; then
-    echo "[wrapper] Found super.img.raw in ${dir} — running lpunpack..."
+    echo "[wrapper] Found super.img.raw — running lpunpack..."
     mkdir -p "${dir}/super_unpacked"
     if command -v lpunpack >/dev/null 2>&1; then
-      lpunpack "${dir}/super.img.raw" "${dir}/super_unpacked" || echo "[wrapper] lpunpack failed (non-fatal)"
+      lpunpack "${dir}/super.img.raw" "${dir}/super_unpacked" || echo "[wrapper] lpunpack failed"
       mv "${dir}/super_unpacked/"*.img "${dir}/" 2>/dev/null || true
-    else
-      echo "[wrapper] lpunpack not available"
     fi
   fi
 
   if [ -f "$candidate" ]; then
     if file -b "$candidate" | grep -qi "Android sparse image"; then
-      echo "[wrapper] Converting sparse image $candidate -> raw using simg2img"
+      echo "[wrapper] Converting sparse image $candidate"
       tmp="${candidate}.raw"
       if command -v simg2img >/dev/null 2>&1; then
-        simg2img "$candidate" "$tmp" && mv "$tmp" "$candidate" || echo "[wrapper] simg2img failed (non-fatal)"
-      else
-        echo "[wrapper] simg2img not found"
+        simg2img "$candidate" "$tmp" && mv "$tmp" "$candidate"
       fi
     fi
   fi
 done
 
 exec "$REAL7Z" "$@"
-EOF'
+BASH
+
           sudo chmod +x /usr/local/bin/7z
           echo "[setup] 7z wrapper installed."
 
-      - name: Download ROM (Fast) with fail-fast
+      - name: Download ROM
         run: |
           mkdir -p "$RUNNER_TEMP/roms"
           cd "$RUNNER_TEMP/roms"
           SHORT_FILE="firmware.zip"
-          echo "Downloading ROM from: ${ROM_LINK}"
-          if ! aria2c -x16 -s16 -m5 -k1M -o "$SHORT_FILE" "${ROM_LINK}"; then
-            echo "aria2c failed, falling back to curl..."
-            curl -L --retry 5 --retry-all-errors -C - -o "$SHORT_FILE" "${ROM_LINK}"
+
+          echo "Downloading ROM from: $ROM_LINK"
+
+          if ! aria2c -x16 -s16 -m5 -k1M -o "$SHORT_FILE" "$ROM_LINK"; then
+            echo "aria2c failed; falling back to curl..."
+            curl -L --retry 5 --retry-all-errors -C - -o "$SHORT_FILE" "$ROM_LINK"
           fi
-          if [ ! -f "$SHORT_FILE" ]; then
-            echo "ERROR: download failed, no file present."
-            exit 1
-          fi
+
           if [ ! -s "$SHORT_FILE" ]; then
-            echo "ERROR: downloaded file is empty."
-            exit 1
+            echo "Download failed"; exit 1
           fi
-          echo "Inspecting downloaded file type..."
+
+          mkdir -p extracted
           mime=$(file -b --mime-type "$SHORT_FILE" || true)
           echo "MIME: $mime"
-          mkdir -p "$RUNNER_TEMP/roms/extracted"
+
           if unzip -t "$SHORT_FILE" >/dev/null 2>&1; then
-            unzip -q "$SHORT_FILE" -d "$RUNNER_TEMP/roms/extracted" || true
+            unzip -q "$SHORT_FILE" -d extracted
           elif tar -tf "$SHORT_FILE" >/dev/null 2>&1; then
-            tar -xf "$SHORT_FILE" -C "$RUNNER_TEMP/roms/extracted" || true
+            tar -xf "$SHORT_FILE" -C extracted
           else
-            cp "$SHORT_FILE" "$RUNNER_TEMP/roms/extracted/"
+            cp "$SHORT_FILE" extracted/
           fi
-          cd "$RUNNER_TEMP/roms/extracted" || exit 0
+
+          cd extracted
           if ls *super*.img.lz4 1>/dev/null 2>&1; then
-            for s in *super*.img.lz4; do
-              lz4 -d "$s" "super.img.raw" || true
-            done
+            for s in *super*.img.lz4; do lz4 -d "$s" super.img.raw; done
           fi
+
           if ls *super*.img 1>/dev/null 2>&1; then
             for s in *super*.img; do
               if file "$s" | grep -qi lz4; then
-                lz4 -d "$s" "super.img.raw" || true
+                lz4 -d "$s" super.img.raw
               else
-                cp "$s" super.img.raw || true
+                cp "$s" super.img.raw
               fi
             done
           fi
+
           if [ -f super.img.raw ]; then
-            mkdir -p "$RUNNER_TEMP/roms/extracted/super_unpacked"
+            mkdir -p super_unpacked
             if command -v lpunpack >/dev/null 2>&1; then
-              lpunpack super.img.raw "$RUNNER_TEMP/roms/extracted/super_unpacked" || echo "lpunpack failed (continuing)"
-              mv "$RUNNER_TEMP/roms/extracted/super_unpacked/"*.img "$RUNNER_TEMP/roms/extracted/" 2>/dev/null || true
+              lpunpack super.img.raw super_unpacked || true
+              mv super_unpacked/*.img . 2>/dev/null || true
             fi
           fi
-          ls -lah "$RUNNER_TEMP/roms/extracted" || true
+
+          echo "Extracted files:"
+          ls -lah
 
       - name: Run Dumpyara
         run: |
@@ -144,12 +147,12 @@ EOF'
           cd /tmp/dumpyara
           ./dumpyara.sh "$RUNNER_TEMP/roms/firmware.zip" --working-dir /tmp/df || true
 
-      - name: Rename output folder based on original filename
+      - name: Rename output folder
         run: |
           cd /tmp/df
-          ORIG_NAME=$(basename "${ROM_LINK}" | cut -d'?' -f1)
+          ORIG_NAME=$(basename "$ROM_LINK" | cut -d'?' -f1)
           if [ -d output ]; then
-            mv output "${ORIG_NAME%.zip}" || true
+            mv output "${ORIG_NAME%.zip}"
           fi
 
       - name: Upload Dump
