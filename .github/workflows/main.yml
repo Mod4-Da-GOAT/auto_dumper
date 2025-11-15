@@ -1,9 +1,9 @@
-name: Dump Firmware CI (Printf - AP support, no 7z wrapper)
+name: Dump Firmware CI (Patch dumpyara - img handler, debug listing)
 on:
   workflow_dispatch:
     inputs:
       ROM_LINK:
-        description: "Direct URL of ROM/Firmware (zip / ap / tar / payload.bin)"
+        description: "Direct URL of ROM/Firmware (zip / ap / tar / payload.bin / ap)"
         required: true
 
 env:
@@ -21,7 +21,7 @@ jobs:
       - name: Free Disk Space
         uses: rokibhasansagar/slimhub_actions@main
 
-      - name: Create clone_dumpyara.sh
+      - name: Clone Dumpyara (printf-safe)
         run: |
           printf '%s\n' \
           '#!/usr/bin/env bash' \
@@ -33,197 +33,199 @@ jobs:
           'chmod +x dumpyara.sh || true' \
           'if [ -f setup.sh ]; then sudo bash setup.sh; fi' \
           'mkdir -p /tmp/dumpyara' \
-          'echo -n "$DUMPYARA_PAT" > /tmp/dumpyara/.github_token' \
-          'chmod 600 /tmp/dumpyara/.github_token || true' \
-          'echo "$GIT_ORG" > /tmp/dumpyara/.github_orgname' \
-          'echo "$TG_TOKEN" > /tmp/dumpyara/.tg_token' \
-          'echo "$CHAT_ID" > /tmp/dumpyara/.tg_chat' \
+          'if [ -n "${DUMPYARA_PAT:-}" ]; then echo -n "$DUMPYARA_PAT" > /tmp/dumpyara/.github_token || true; fi' \
+          'if [ -n "${GIT_ORG:-}" ]; then echo -n "$GIT_ORG" > /tmp/dumpyara/.github_orgname || true; fi' \
+          'if [ -n "${TG_TOKEN:-}" ]; then echo -n "$TG_TOKEN" > /tmp/dumpyara/.tg_token || true; fi' \
+          'if [ -n "${CHAT_ID:-}" ]; then echo -n "$CHAT_ID" > /tmp/dumpyara/.tg_chat || true; fi' \
+          'chmod 600 /tmp/dumpyara/.github_token 2>/dev/null || true' \
+          'echo "[clone] Dumpyara cloned to /tmp/dumpyara"' \
           > /tmp/clone_dumpyara.sh
           chmod +x /tmp/clone_dumpyara.sh
           /tmp/clone_dumpyara.sh
 
-      - name: Create install_tools.sh
+      - name: Install tools (libarchive-tools, lz4, simg2img/lpunpack etc.)
         run: |
           printf '%s\n' \
           '#!/usr/bin/env bash' \
           'set -euo pipefail' \
           'sudo apt-get update -y' \
-          'sudo apt-get install -y p7zip-full lz4 android-sdk-libsparse-utils aria2 curl python3-pip unzip bsdtar' \
+          'sudo apt-get install -y p7zip-full lz4 android-sdk-libsparse-utils aria2 curl python3-pip unzip libarchive-tools git tree' \
           'pip3 install --no-cache-dir liblp' \
+          'echo "[tools] installed"' \
           > /tmp/install_tools.sh
           chmod +x /tmp/install_tools.sh
           /tmp/install_tools.sh
 
-      - name: Create fetch.sh
+      - name: Create img handler (dumpyara_img_handler.sh)
+        run: |
+          printf '%s\n' \
+          '#!/usr/bin/env bash' \
+          'set -euo pipefail' \
+          'IMG="$1"' \
+          'OUTDIR="$2"' \
+          'mkdir -p "$OUTDIR"' \
+          'echo "[img-handler] IMG=$IMG OUTDIR=$OUTDIR"' \
+          'if echo "$IMG" | grep -qi "super"; then' \
+          '  if command -v lpunpack >/dev/null 2>&1; then' \
+          '    lpunpack "$IMG" "$OUTDIR" || echo "[img-handler] lpunpack failed"' \
+          '    exit 0' \
+          '  else' \
+          '    echo "[img-handler] lpunpack not found"; exit 2' \
+          '  fi' \
+          'fi' \
+          'if file -b "$IMG" | grep -qi "android sparse image"; then' \
+          '  if command -v simg2img >/dev/null 2>&1; then' \
+          '    TMPRAW="$(mktemp -u)/$(basename "$IMG").raw"' \
+          '    simg2img "$IMG" "$TMPRAW" || echo "[img-handler] simg2img failed"' \
+          '    mv "$TMPRAW" "$OUTDIR/$(basename "$IMG").raw" || true' \
+          '    echo "[img-handler] converted to $OUTDIR/$(basename "$IMG").raw"' \
+          '    exit 0' \
+          '  else' \
+          '    echo "[img-handler] simg2img not found"; exit 3' \
+          '  fi' \
+          'fi' \
+          'cp -f "$IMG" "$OUTDIR/" || true' \
+          'exit 0' \
+          > /usr/local/bin/dumpyara_img_handler.sh
+          sudo chmod +x /usr/local/bin/dumpyara_img_handler.sh
+
+      - name: Patch dumpyara.sh to call img handler for .img (printf-safe)
+        run: |
+          printf '%s\n' \
+          '#!/usr/bin/env bash' \
+          'set -euo pipefail' \
+          'D=/tmp/dumpyara' \
+          'S="$D/dumpyara.sh"' \
+          'if [ ! -f "$S" ]; then echo "[patch] missing $S"; exit 1; fi' \
+          'cp -f "$S" "$S.bak"' \
+          'awk '\''NR==1{print "# patched helper: dumpyara_7z()"; print "dumpyara_7z() {"; print "  args=(\"$@\")"; print "  for a in \"${args[@]}\"; do"; print "    case \"$a\" in"; print "      -*) continue ;;"; print "      *)"; print "        if echo \"$a\" | grep -qi \"\\\\.img\" || echo \"$a\" | grep -qi \"super\"; then"; print "          outdir=\"$(pwd)/.dumpyara_img_extracted\""; print "          mkdir -p \"$outdir\""; print "          if command -v /usr/local/bin/dumpyara_img_handler.sh >/dev/null 2>&1; then"; print "            /usr/local/bin/dumpyara_img_handler.sh \"$a\" \"$outdir\" || true"; print "          fi"; print "        fi"; print "      ;;"; print "    esac"; print "  done"; print "  if command -v 7z >/dev/null 2>&1; then 7z \"${args[@]}\"; else return 0; fi"; print "}"; print ""; } NR>1{print}' "$S.bak" > "$S.patched" && mv "$S.patched" "$S"' \
+          > /tmp/patch_dumpyara_wrapper.sh
+          chmod +x /tmp/patch_dumpyara_wrapper.sh
+          /tmp/patch_dumpyara_wrapper.sh
+
+      - name: Create fetch helper (printf-safe)
         run: |
           printf '%s\n' \
           '#!/usr/bin/env bash' \
           'set -euo pipefail' \
           'URL="$1"' \
           'OUT="$2"' \
-          'echo "[fetch] Input URL: $URL"' \
           'REAL_URL=$(curl -L -s -o /dev/null -w "%{url_effective}" "$URL" || echo "$URL")' \
-          'echo "[fetch] Final resolved URL: $REAL_URL"' \
-          'echo "[fetch] Downloading to: $OUT"' \
-          '' \
           'aria2c -x16 -s16 -j1 -m10 -k1M --console-log-level=warn --file-allocation=none -o "$OUT" "$REAL_URL" && exit 0' \
-          '' \
-          'echo "[fetch] aria2c failed - switching to curl fallback."' \
-          '' \
           'curl -L --retry 10 --retry-delay 5 --retry-all-errors --speed-time 15 --speed-limit 10000 -C - -o "$OUT" "$REAL_URL"' \
-          '' \
-          'echo "[fetch] Download complete."' \
           > /tmp/fetch.sh
           chmod +x /tmp/fetch.sh
 
-      - name: Create download_and_prepare.sh
+      - name: Download firmware (printf-safe)
         run: |
           printf '%s\n' \
           '#!/usr/bin/env bash' \
           'set -euo pipefail' \
-          '' \
-          '# Download file to runner temp roms dir' \
-          'RUNNER_TEMP_DIR="${RUNNER_TEMP:-/tmp}"' \
-          'mkdir -p "$RUNNER_TEMP_DIR/roms"' \
-          'cd "$RUNNER_TEMP_DIR/roms"' \
-          'OUTNAME="firmware.zip"' \
-          '' \
-          'echo "[dl] Downloading ROM from: $ROM_LINK"' \
-          '/tmp/fetch.sh "$ROM_LINK" "$OUTNAME"' \
-          '' \
-          'if [ ! -s "$OUTNAME" ]; then' \
-          '  echo "[dl] Download failed or empty file"; exit 1' \
-          'fi' \
-          '' \
-          '# Detect extension and attempt to normalize to firmware.zip when possible' \
-          'lower=$(echo "$OUTNAME" | tr \"[:upper:]\" \"[:lower:]\")' \
-          'echo "[dl] Saved file: $RUNNER_TEMP_DIR/roms/$OUTNAME"' \
-          'ls -lh "$OUTNAME"' \
-          '' \
-          '# If file appears to be .ap (Samsung/AP packages, or vendor .ap), try extract' \
-          'if file "$OUTNAME" | grep -qi \"Zip archive\" || file "$OUTNAME" | grep -qi \"Android sparse image\" || file "$OUTNAME" | grep -qi \"XZ compressed data\" || file "$OUTNAME" | grep -qi \"bzip2\"; then' \
-          '  echo "[dl] Looks like a normal archive or image ($OUTNAME) - keeping as is"' \
-          'else' \
-          '  echo "[dl] Checking for .ap extension or unknown container"' \
-          'fi' \
-          '' \
-          '# Try to handle .ap specially: some vendors use .ap as an archive/container' \
-          'if echo "$OUTNAME" | grep -qi \"\\.ap$\" || file "$OUTNAME" | grep -qi \"Android Package\" 1>/dev/null 2>&1; then' \
-          '  echo \"[dl] Detected .ap container - attempting extraction with multiple tools\"' \
-          '  mkdir -p ./ap_extract' \
-          '  extracted=false' \
-          '  # try 7z' \
-          '  if command -v 7z >/dev/null 2>&1; then' \
-          '    echo \"[dl] trying 7z x\"' \
-          '    if 7z x -y "$OUTNAME" -o./ap_extract >/dev/null 2>&1; then' \
-          '      extracted=true' \
-          '    fi' \
-          '  fi' \
-          '  # try unzip' \
-          '  if [ \"$extracted\" = false ]; then' \
-          '    echo \"[dl] trying unzip\"' \
-          '    if unzip -q "$OUTNAME" -d ./ap_extract >/dev/null 2>&1; then' \
-          '      extracted=true' \
-          '    fi' \
-          '  fi' \
-          '  # try bsdtar (tar auto-detect)' \
-          '  if [ \"$extracted\" = false ] && command -v bsdtar >/dev/null 2>&1; then' \
-          '    echo \"[dl] trying bsdtar -xf\"' \
-          '    if bsdtar -xf "$OUTNAME" -C ./ap_extract >/dev/null 2>&1; then' \
-          '      extracted=true' \
-          '    fi' \
-          '  fi' \
-          '' \
-          '  if [ \"$extracted\" = true ]; then' \
-          '    echo \"[dl] extraction of .ap succeeded; listing ap_extract:\"' \
-          '    ls -lah ap_extract || true' \
-          '    # If super.img found, copy it beside firmware.zip for later tools' \
-          '    if ls ap_extract/*super*.img* 1>/dev/null 2>&1; then' \
-          '      echo \"[dl] Found super.img inside .ap. Copying to working area as super.img\"' \
-          '      cp ap_extract/*super*.img* ./super.img || true' \
-          '    fi' \
-          '    # If payload.bin found, copy it' \
-          '    if ls ap_extract/*payload* 1>/dev/null 2>&1; then' \
-          '      cp ap_extract/*payload* ./payload.bin || true' \
-          '    fi' \
-          '  else' \
-          '    echo \"[dl] .ap extraction attempts failed - will keep original file and let dumpyara attempt extraction\"' \
-          '  fi' \
-          'fi' \
-          '' \
-          'echo \"[dl] download_and_prepare finished\"' \
-          'ls -lah' \
-          > /tmp/download_and_prepare.sh
-          chmod +x /tmp/download_and_prepare.sh
-          /tmp/download_and_prepare.sh
+          'RT="${RUNNER_TEMP:-/tmp}"' \
+          'mkdir -p "$RT/roms"' \
+          'cd "$RT/roms"' \
+          'OUT="firmware.zip"' \
+          '/tmp/fetch.sh "$ROM_LINK" "$OUT"' \
+          'if [ ! -s "$OUT" ]; then echo "[dl] download failed"; exit 1; fi' \
+          'echo "[dl] saved: $RT/roms/$OUT"; ls -lh "$OUT"' \
+          > /tmp/download_firmware.sh
+          chmod +x /tmp/download_firmware.sh
+          /tmp/download_firmware.sh
 
-      - name: Create prepare_dumpyara_workdir.sh
+      - name: Debug — list archive contents & common candidates
         run: |
           printf '%s\n' \
           '#!/usr/bin/env bash' \
           'set -euo pipefail' \
-          '' \
-          '# Create Dumpyara working directory where Dumpyara expects token files' \
-          'BASE_NAME=$(basename "$ROM_LINK" | cut -d\"?\" -f1)' \
-          'BASE_NAME=${BASE_NAME%.zip}' \
-          'WORKING_DIR="/tmp/dumpyara/working/${BASE_NAME}"' \
-          'mkdir -p "$WORKING_DIR"' \
-          '' \
-          '# Write expected token files into Dumpyara working directory' \
-          'if [ -n "${TG_TOKEN:-}" ]; then echo -n "$TG_TOKEN" > "$WORKING_DIR/.tgtoken" || true; fi' \
-          'if [ -n "${DUMPYARA_PAT:-}" ]; then echo -n "$DUMPYARA_PAT" > "$WORKING_DIR/.github_token" || true; fi' \
-          'if [ -n "${GIT_ORG:-}" ]; then echo -n "$GIT_ORG" > "$WORKING_DIR/.github_orgname" || true; fi' \
-          'if [ -n "${TG_TOKEN:-}" ]; then echo -n "$CHAT_ID" > "$WORKING_DIR/.tg_chat" || true; fi' \
-          '' \
-          'chmod 600 "$WORKING_DIR/.github_token" 2>/dev/null || true' \
-          'echo "[prep] Dumpyara working directory prepared: $WORKING_DIR"' \
-          'ls -lah "$WORKING_DIR" || true' \
+          'RT="${RUNNER_TEMP:-/tmp}"' \
+          'cd "$RT/roms"' \
+          'OUT="firmware.zip"' \
+          'echo "[debug] file command:"' \
+          'file -b "$OUT" || true' \
+          'echo "[debug] unzip -l (if zip):"' \
+          'unzip -l "$OUT" 2>/dev/null || true' \
+          'echo "[debug] tar -tf (if tar):"' \
+          'tar -tf "$OUT" 2>/dev/null || true' \
+          'echo "[debug] look for payload.bin, super.img, *.img, build.prop"' \
+          'unzip -Z1 "$OUT" 2>/dev/null | egrep -i "payload\\.|super.*\\.img|\\.img$|build\\.prop" || true' \
+          '> /tmp/archive_debug.txt' \
+          'echo "[debug] archive debug written to /tmp/archive_debug.txt"' \
+          'cat /tmp/archive_debug.txt || true' \
+          > /tmp/archive_debug.sh
+          chmod +x /tmp/archive_debug.sh
+          /tmp/archive_debug.sh
+
+      - name: Prepare Dumpyara working dir (tokens in expected location)
+        run: |
+          printf '%s\n' \
+          '#!/usr/bin/env bash' \
+          'set -euo pipefail' \
+          'BASE=$(basename "$ROM_LINK" | cut -d"?" -f1)' \
+          'BASE=${BASE%.zip}' \
+          'WK="/tmp/dumpyara/working/${BASE}"' \
+          'mkdir -p "$WK"' \
+          'if [ -n "${TG_TOKEN:-}" ]; then echo -n "$TG_TOKEN" > "$WK/.tgtoken" || true; fi' \
+          'if [ -n "${DUMPYARA_PAT:-}" ]; then echo -n "$DUMPYARA_PAT" > "$WK/.github_token" || true; fi' \
+          'if [ -n "${GIT_ORG:-}" ]; then echo -n "$GIT_ORG" > "$WK/.github_orgname" || true; fi' \
+          'if [ -n "${CHAT_ID:-}" ]; then echo -n "$CHAT_ID" > "$WK/.tg_chat" || true; fi' \
+          'chmod 600 "$WK/.github_token" 2>/dev/null || true' \
+          'echo "[prep] WK=$WK"; ls -lah "$WK" || true' \
           > /tmp/prepare_dumpyara_workdir.sh
           chmod +x /tmp/prepare_dumpyara_workdir.sh
           /tmp/prepare_dumpyara_workdir.sh
 
-      - name: Create run_dumpyara.sh (writes tokens into working dir and runs on original ZIP)
+      - name: Run patched Dumpyara on original ZIP
         run: |
           printf '%s\n' \
           '#!/usr/bin/env bash' \
           'set -euo pipefail' \
-          'echo "[dumpyara] Starting dumpyara run (will use original ZIP)"' \
+          'RT="${RUNNER_TEMP:-/tmp}"' \
+          'ZIP="$RT/roms/firmware.zip"' \
           'mkdir -p /tmp/df' \
           'cd /tmp/dumpyara' \
-          'BASE_NAME=$(basename "$ROM_LINK" | cut -d\"?\" -f1)' \
-          'BASE_NAME=${BASE_NAME%.zip}' \
-          'WORKING_DIR="/tmp/dumpyara/working/${BASE_NAME}"' \
-          'echo "[dumpyara] Working dir to be used: $WORKING_DIR"' \
-          'if [ ! -d "$WORKING_DIR" ]; then mkdir -p "$WORKING_DIR"; fi' \
-          '' \
-          '# Ensure tokens exist in working dir (redundant but safe)' \
-          'if [ -n "${TG_TOKEN:-}" ]; then echo -n "$TG_TOKEN" > "$WORKING_DIR/.tgtoken" || true; fi' \
-          'if [ -n "${DUMPYARA_PAT:-}" ]; then echo -n "$DUMPYARA_PAT" > "$WORKING_DIR/.github_token" || true; fi' \
-          'if [ -n "${GIT_ORG:-}" ]; then echo -n "$GIT_ORG" > "$WORKING_DIR/.github_orgname" || true; fi' \
-          'if [ -n "${CHAT_ID:-}" ]; then echo -n "$CHAT_ID" > "$WORKING_DIR/.tg_chat" || true; fi' \
-          'chmod 600 "$WORKING_DIR/.github_token" 2>/dev/null || true' \
-          '' \
-          'echo "[dumpyara] Listing working dir before run:"' \
-          'ls -lah "$WORKING_DIR" || true' \
-          '' \
-          'echo "[dumpyara] Running: ./dumpyara.sh \"$RUNNER_TEMP/roms/firmware.zip\" --working-dir /tmp/df"' \
-          './dumpyara.sh "$RUNNER_TEMP/roms/firmware.zip" --working-dir /tmp/df || true' \
-          '' \
-          'echo "[dumpyara] done"' \
-          > /tmp/run_dumpyara.sh
-          chmod +x /tmp/run_dumpyara.sh
-          /tmp/run_dumpyara.sh
+          'BASE=$(basename "$ROM_LINK" | cut -d"?" -f1); BASE=${BASE%.zip}' \
+          'WK="/tmp/dumpyara/working/${BASE}"' \
+          'if [ -n "${DUMPYARA_PAT:-}" ]; then echo -n "$DUMPYARA_PAT" > "$WK/.github_token" || true; fi' \
+          'if [ -n "${TG_TOKEN:-}" ]; then echo -n "$TG_TOKEN" > "$WK/.tgtoken" || true; fi' \
+          'if [ -n "${GIT_ORG:-}" ]; then echo -n "$GIT_ORG" > "$WK/.github_orgname" || true; fi' \
+          'if [ -n "${CHAT_ID:-}" ]; then echo -n "$CHAT_ID" > "$WK/.tg_chat" || true; fi' \
+          'chmod 600 "$WK/.github_token" 2>/dev/null || true' \
+          'echo "[dumpyara-run] running ./dumpyara.sh \"$ZIP\" --working-dir /tmp/df"' \
+          '/bin/bash ./dumpyara.sh "$ZIP" --working-dir /tmp/df || true' \
+          'echo "[dumpyara-run] done"' \
+          > /tmp/run_dumpyara_patched.sh
+          chmod +x /tmp/run_dumpyara_patched.sh
+          /tmp/run_dumpyara_patched.sh
 
-      - name: Create rename_output.sh
+      - name: Debug listing — show dumpyara working output and tree of extraction folders
+        run: |
+          printf '%s\n' \
+          '#!/usr/bin/env bash' \
+          'set -euo pipefail' \
+          'echo "[debug] Dumpyara working dir base: /tmp/dumpyara/working"' \
+          'ls -lah /tmp/dumpyara || true' \
+          'echo "[debug] listing working subdirs (if any):"' \
+          'for d in /tmp/dumpyara/working/*; do if [ -d "$d" ]; then echo "---- $d ----"; ls -lah "$d" || true; fi; done || true' \
+          'echo "[debug] Dump output folder: /tmp/df"' \
+          'ls -lah /tmp/df || true' \
+          'echo "[debug] Full tree of /tmp/df (if tree installed):"' \
+          'if command -v tree >/dev/null 2>&1; then tree -a -h -L 5 /tmp/df || true; else echo "tree not available"; fi' \
+          'echo "[debug] Show any .img_extracted folders created by the patched helper:"' \
+          'find /tmp -type d -name ".dumpyara_img_extracted" -print0 | xargs -0 -r -I{} sh -c "echo ---- {} ----; tree -a -h -L 4 {} || ls -lah {}"' \
+          'echo "[debug] Show archive debug /tmp/archive_debug.txt if present:"' \
+          'if [ -f /tmp/archive_debug.txt ]; then echo "---- /tmp/archive_debug.txt ----"; sed -n \"1,200p\" /tmp/archive_debug.txt || true; fi' \
+          > /tmp/dump_debug_list.sh
+          chmod +x /tmp/dump_debug_list.sh
+          /tmp/dump_debug_list.sh
+
+      - name: Rename output folder (safe)
         run: |
           printf '%s\n' \
           '#!/usr/bin/env bash' \
           'set -euo pipefail' \
           'cd /tmp/df' \
-          'ORIG_NAME=$(basename "$ROM_LINK" | cut -d\"?\" -f1)' \
-          'if [ -d output ]; then' \
-          '  mv output \"${ORIG_NAME%.zip}\"' \
-          'fi' \
+          'ORIG=$(basename "$ROM_LINK" | cut -d"?" -f1)' \
+          'if [ -d output ]; then mv output "${ORIG%.zip}" || true; fi' \
           > /tmp/rename_output.sh
           chmod +x /tmp/rename_output.sh
           /tmp/rename_output.sh
@@ -234,12 +236,13 @@ jobs:
           name: dump-output
           path: /tmp/df/*
 
-      - name: Create cleanup.sh
+      - name: Final cleanup (keep logs in /tmp if you want to inspect)
         run: |
           printf '%s\n' \
           '#!/usr/bin/env bash' \
           'set -euo pipefail' \
-          'sudo rm -rf /tmp/dumpyara \"${RUNNER_TEMP:-/tmp}/roms\" /tmp/df ~/.cache || true' \
+          '# Comment out the next line to retain /tmp/dumpyara and /tmp/df for debugging' \
+          'sudo rm -rf /tmp/dumpyara "${RUNNER_TEMP:-/tmp}/roms" /tmp/df ~/.cache || true' \
           > /tmp/cleanup.sh
           chmod +x /tmp/cleanup.sh
           /tmp/cleanup.sh
