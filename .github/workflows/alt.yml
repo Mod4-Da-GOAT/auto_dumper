@@ -19,9 +19,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
-
+      # --- Download Cleanup Script ---
       - name: Download Cleanup Script
         run: |
           echo "::group::Download Cleanup Script"
@@ -31,6 +29,7 @@ jobs:
           chmod +x /tmp/maximize.space.sh
           echo "::endgroup::"
 
+      # --- Initial Cleanup (Safe) ---
       - name: Initial Cleanup (Safe)
         run: |
           echo "::group::Initial Cleanup (Safe)"
@@ -38,12 +37,11 @@ jobs:
           find $GITHUB_WORKSPACE /tmp /var/tmp -maxdepth 1 -user $USER -exec rm -rf {} + 2>/dev/null || true
           if command -v docker >/dev/null 2>&1; then docker system prune -af; fi
           echo "::endgroup::"
-        working-directory: ${{ github.workspace }}
 
+      # --- Prepare Dumper & Patch IMG ---
       - name: Prepare Dumper & Patch IMG
         run: |
           echo "::group::Prepare Dumper & Patch IMG"
-          # Create dumprx directory inside workspace
           mkdir -p "$GITHUB_WORKSPACE/dumprx"
           cd "$GITHUB_WORKSPACE/dumprx"
 
@@ -74,8 +72,8 @@ jobs:
           cp dumper.sh dumper.sh.bak
           sed -i '/7z x .*\.img/ c\simg2img "\$1" "\$2"' dumper.sh
           echo "::endgroup::"
-        working-directory: ${{ github.workspace }}
 
+      # --- Download Firmware ---
       - name: Download Firmware
         run: |
           echo "::group::Download Firmware"
@@ -85,11 +83,12 @@ jobs:
           export FIRMWARE_FILE=$(ls -1t | head -n1)
           echo "Downloaded firmware file: $FIRMWARE_FILE"
 
-          # Post-download cleanup
+          # Post-download cleanup to free space
           export ROOT_RESERVE_MB=5120 TEMP_RESERVE_MB=5120
           bash /tmp/maximize.space.sh 2>/dev/null || true
           echo "::endgroup::"
 
+      # --- Dump Firmware ---
       - name: Dump Firmware
         run: |
           echo "::group::[DUMP JOB]"
@@ -97,6 +96,7 @@ jobs:
           ./dumper.sh "$GITHUB_WORKSPACE/rom/$FIRMWARE_FILE" || exit 1
           echo "::endgroup::"
 
+      # --- Final Cleanup ---
       - name: Final Cleanup Space
         run: |
           echo "::group::Final Cleanup"
