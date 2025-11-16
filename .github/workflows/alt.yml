@@ -31,7 +31,11 @@ jobs:
       - name: Initial Cleanup Space
         run: |
           echo "::group::Initial Cleanup"
-          export ROOT_RESERVE_MB=10240 TEMP_RESERVE_MB=10240
+          # Lower reserved space to make cleanup more aggressive
+          export ROOT_RESERVE_MB=5120
+          export TEMP_RESERVE_MB=5120
+          bash /tmp/maximize.space.sh 2>/dev/null
+          # Optional: repeat cleanup for more effect
           bash /tmp/maximize.space.sh 2>/dev/null
           echo "::endgroup::"
 
@@ -93,11 +97,15 @@ jobs:
           echo "::group::Download Firmware"
           mkdir -p /data/job/rom
           cd /data/job/rom
-          # Using curl to handle redirects & speed
           curl -L --retry 8 --retry-connrefused -O "${ROM_LINK}"
-          # Get the downloaded filename dynamically
           export FIRMWARE_FILE=$(ls -1t | head -n1)
           echo "Downloaded firmware file: $FIRMWARE_FILE"
+          # Run cleanup again after download to free space before dump
+          echo "::group::Post-Download Cleanup"
+          export ROOT_RESERVE_MB=5120
+          export TEMP_RESERVE_MB=5120
+          bash /tmp/maximize.space.sh 2>/dev/null
+          echo "::endgroup::"
           echo "::endgroup::"
 
       - name: Dump Firmware
