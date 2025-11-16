@@ -31,14 +31,9 @@ jobs:
       - name: Initial Cleanup (Safe)
         run: |
           echo "::group::Initial Cleanup (Safe)"
-          # Clean apt cache
           sudo apt-get clean
-          # Remove only user-owned temp files, ignore errors
-          find /tmp /var/tmp -maxdepth 1 -user $USER -exec rm -rf {} + 2>/dev/null || true
-          # Optional: prune Docker if using Docker
-          if command -v docker >/dev/null 2>&1; then
-            docker system prune -af
-          fi
+          find $GITHUB_WORKSPACE /tmp /var/tmp -maxdepth 1 -user $USER -exec rm -rf {} + 2>/dev/null || true
+          if command -v docker >/dev/null 2>&1; then docker system prune -af; fi
           echo "::endgroup::"
 
       - name: Set Git Configs & Secrets
@@ -49,84 +44,63 @@ jobs:
         env:
           PAT: ${{ secrets.GH_TOKEN }}
 
-      - name: Prepare Dumper
+      - name: Prepare Dumper & Patch IMG
         run: |
-          mkdir -p /data/job && cd /data/job
-          echo "::group::Cloning DumprX"
+          echo "::group::Prepare Dumper & Patch IMG"
+          mkdir -p "$GITHUB_WORKSPACE/dumprx"
+          cd "$GITHUB_WORKSPACE/dumprx"
+
+          # Clone DumprX
           git clone -q --depth=1 --filter=blob:none https://github.com/DumprX/DumprX.git
           cd DumprX
+
+          # Setup DumprX
           sed -i '/astral/d' ./setup.sh
           sudo -EH bash ./setup.sh || exit 1
           sudo apt-get install neofetch -qy
           bash -c "$(curl -sL https://astral.sh/uv/install.sh)"
-          ls -lAog ${HOME}/.local/bin/
           . ~/.bashrc
           echo "$GITHUB_TOKEN" > .github_token
           echo "$GIT_ORG" > .github_orgname
           echo "$TG_TOKEN" > .tg_token
           echo "$CHAT_ID" > .tg_chat
-          echo "::endgroup::"
 
-      - name: Install IMG Tool
-        run: |
-          echo "::group::Install IMG Tool"
+          # Install IMG Tool
           sudo apt-get update -qy
           sudo apt-get install android-sdk-libsparse-utils -qy
-          # Verify installation
           if ! command -v simg2img >/dev/null 2>&1; then
-            echo "Error: simg2img not found after installation"
+            echo "Error: simg2img not found"
             exit 1
           fi
+
+          # Patch DumprX for IMG files
+          cp dumper.sh dumper.sh.bak
+          sed -i '/7z x .*\.img/ c\simg2img "\$1" "\$2"' dumper.sh
           echo "::endgroup::"
 
-      - name: Patch DumprX for IMG Files
-        run: |
-         echo "::group::Patch DumprX for IMG"
-         # Find DumprX directory
-         DUMPRX_DIR=$(find /data/job -maxdepth 2 -type d -name "DumprX" | head -n1)
-         if [ -z "$DUMPRX_DIR" ]; then
-          echo "Error: DumprX directory not found!"
-          exit 1
-         fi
-         echo "DumprX found at: $DUMPRX_DIR"
-
-         # Ensure simg2img is installed
-         if ! command -v simg2img >/dev/null 2>&1; then
-           echo "Error: simg2img is not installed, cannot patch DumprX"
-           exit 1
-         fi
-
-         # Patch dumper.sh
-         cp "$DUMPRX_DIR/dumper.sh" "$DUMPRX_DIR/dumper.sh.bak"
-         sed -i '/7z x .*\.img/ c\simg2img "\$1" "\$2"' "$DUMPRX_DIR/dumper.sh"
-         echo "::endgroup::"
-         
       - name: Download Firmware
         run: |
           echo "::group::Download Firmware"
-          mkdir -p /data/job/rom
-          cd /data/job/rom
+          mkdir -p "$GITHUB_WORKSPACE/rom"
+          cd "$GITHUB_WORKSPACE/rom"
           curl -L --retry 8 --retry-connrefused -O "${ROM_LINK}"
           export FIRMWARE_FILE=$(ls -1t | head -n1)
           echo "Downloaded firmware file: $FIRMWARE_FILE"
-          # Run cleanup again after download to free space before dump
-          echo "::group::Post-Download Cleanup"
-          export ROOT_RESERVE_MB=5120
-          export TEMP_RESERVE_MB=5120
-          bash /tmp/maximize.space.sh 2>/dev/null
-          echo "::endgroup::"
+          # Post-download cleanup
+          export ROOT_RESERVE_MB=5120 TEMP_RESERVE_MB=5120
+          bash /tmp/maximize.space.sh 2>/dev/null || true
           echo "::endgroup::"
 
       - name: Dump Firmware
         run: |
-          cd /data/job/DumprX
           echo "::group::[DUMP JOB]"
-          ./dumper.sh "/data/job/rom/$FIRMWARE_FILE" || exit 1
+          cd "$GITHUB_WORKSPACE/dumprx/DumprX"
+          ./dumper.sh "$GITHUB_WORKSPACE/rom/$FIRMWARE_FILE" || exit 1
           echo "::endgroup::"
 
       - name: Final Cleanup Space
         run: |
           echo "::group::Final Cleanup"
           export ROOT_RESERVE_MB=10240 TEMP_RESERVE_MB=10240
-          bash /tmp/maximize.space.sh 2>/dev/null
+          bash /tmp/maximize.space.sh 2>/dev/null || true
           echo "::endgroup::"
