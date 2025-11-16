@@ -28,14 +28,14 @@ jobs:
           chmod +x /tmp/maximize.space.sh
           echo "::endgroup::"
 
-      - name: Initial Cleanup Space (Safe)
+      - name: Initial Cleanup (Safe)
         run: |
           echo "::group::Initial Cleanup (Safe)"
           # Clean apt cache
           sudo apt-get clean
-          # Remove temporary files
-          rm -rf /tmp/* /var/tmp/*
-          # Optionally remove Docker images if using Docker
+          # Remove only user-owned temp files, ignore errors
+          find /tmp /var/tmp -maxdepth 1 -user $USER -exec rm -rf {} + 2>/dev/null || true
+          # Optional: prune Docker if using Docker
           if command -v docker >/dev/null 2>&1; then
             docker system prune -af
           fi
