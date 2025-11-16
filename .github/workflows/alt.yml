@@ -65,16 +65,28 @@ jobs:
         run: |
           echo "::group::Install IMG Tool"
           sudo apt-get update -qy
-          sudo apt-get install simg2img -qy
+          sudo apt-get install android-sdk-libsparse-utils -qy
+          # Verify installation
+          if ! command -v simg2img >/dev/null 2>&1; then
+            echo "Error: simg2img not found after installation"
+            exit 1
+          fi
           echo "::endgroup::"
 
       - name: Patch DumprX for IMG Files
         run: |
           echo "::group::Patch DumprX for IMG"
           cd /data/job/DumprX
+          # Ensure simg2img is available before patching
+          if ! command -v simg2img >/dev/null 2>&1; then
+            echo "Error: simg2img is not installed, cannot patch DumprX"
+            exit 1
+          fi
           cp dumper.sh dumper.sh.bak
+          # Replace 7z extraction for .img with simg2img
           sed -i '/7z x .*\.img/ c\simg2img "\$1" "\$2"' dumper.sh
           echo "::endgroup::"
+
 
       - name: Download Firmware
         run: |
