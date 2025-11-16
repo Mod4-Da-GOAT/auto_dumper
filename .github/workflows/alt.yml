@@ -19,6 +19,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Ensure Workspace Exists
+        run: mkdir -p $GITHUB_WORKSPACE
+
 
       - name: Checkout Repository
         uses: actions/checkout@v3
