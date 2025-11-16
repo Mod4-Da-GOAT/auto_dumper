@@ -36,6 +36,9 @@ jobs:
           if command -v docker >/dev/null 2>&1; then docker system prune -af; fi
           echo "::endgroup::"
 
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
       - name: Set Git Configs & Secrets
         uses: rokibhasansagar/custom_workflows/git_config@main
         with:
