@@ -36,20 +36,6 @@ jobs:
           if command -v docker >/dev/null 2>&1; then docker system prune -af; fi
           echo "::endgroup::"
 
-      - name: Ensure Workspace Folder Exists
-        run: mkdir -p "$GITHUB_WORKSPACE"
-
-      - name: Checkout Repository
-        uses: actions/checkout@v3
-
-      - name: Set Git Configs & Secrets
-        uses: rokibhasansagar/custom_workflows/git_config@main
-        with:
-          credential: "yes"
-          git_cookies: "no"
-        env:
-          PAT: ${{ secrets.GH_TOKEN }}
-
       - name: Prepare Dumper & Patch IMG
         run: |
           echo "::group::Prepare Dumper & Patch IMG"
