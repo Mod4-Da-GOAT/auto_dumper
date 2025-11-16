@@ -81,19 +81,26 @@ jobs:
 
       - name: Patch DumprX for IMG Files
         run: |
-          echo "::group::Patch DumprX for IMG"
-          cd /data/job/DumprX
-          # Ensure simg2img is available before patching
-          if ! command -v simg2img >/dev/null 2>&1; then
-            echo "Error: simg2img is not installed, cannot patch DumprX"
-            exit 1
-          fi
-          cp dumper.sh dumper.sh.bak
-          # Replace 7z extraction for .img with simg2img
-          sed -i '/7z x .*\.img/ c\simg2img "\$1" "\$2"' dumper.sh
-          echo "::endgroup::"
+         echo "::group::Patch DumprX for IMG"
+         # Find DumprX directory
+         DUMPRX_DIR=$(find /data/job -maxdepth 2 -type d -name "DumprX" | head -n1)
+         if [ -z "$DUMPRX_DIR" ]; then
+          echo "Error: DumprX directory not found!"
+          exit 1
+         fi
+         echo "DumprX found at: $DUMPRX_DIR"
 
+         # Ensure simg2img is installed
+         if ! command -v simg2img >/dev/null 2>&1; then
+           echo "Error: simg2img is not installed, cannot patch DumprX"
+           exit 1
+         fi
 
+         # Patch dumper.sh
+         cp "$DUMPRX_DIR/dumper.sh" "$DUMPRX_DIR/dumper.sh.bak"
+         sed -i '/7z x .*\.img/ c\simg2img "\$1" "\$2"' "$DUMPRX_DIR/dumper.sh"
+         echo "::endgroup::"
+         
       - name: Download Firmware
         run: |
           echo "::group::Download Firmware"
