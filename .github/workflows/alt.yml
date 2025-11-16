@@ -28,15 +28,17 @@ jobs:
           chmod +x /tmp/maximize.space.sh
           echo "::endgroup::"
 
-      - name: Initial Cleanup Space
+      - name: Initial Cleanup Space (Safe)
         run: |
-          echo "::group::Initial Cleanup"
-          # Lower reserved space to make cleanup more aggressive
-          export ROOT_RESERVE_MB=5120
-          export TEMP_RESERVE_MB=5120
-          bash /tmp/maximize.space.sh 2>/dev/null
-          # Optional: repeat cleanup for more effect
-          bash /tmp/maximize.space.sh 2>/dev/null
+          echo "::group::Initial Cleanup (Safe)"
+          # Clean apt cache
+          sudo apt-get clean
+          # Remove temporary files
+          rm -rf /tmp/* /var/tmp/*
+          # Optionally remove Docker images if using Docker
+          if command -v docker >/dev/null 2>&1; then
+            docker system prune -af
+          fi
           echo "::endgroup::"
 
       - name: Set Git Configs & Secrets
