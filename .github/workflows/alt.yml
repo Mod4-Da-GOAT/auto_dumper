@@ -39,6 +39,7 @@ jobs:
       - name: Prepare Dumper & Patch IMG
         run: |
           echo "::group::Prepare Dumper & Patch IMG"
+          # Create dumprx directory inside workspace
           mkdir -p "$GITHUB_WORKSPACE/dumprx"
           cd "$GITHUB_WORKSPACE/dumprx"
 
@@ -65,7 +66,7 @@ jobs:
             exit 1
           fi
 
-          # Patch DumprX for IMG files
+          # Patch dumper.sh to use simg2img for .img files
           cp dumper.sh dumper.sh.bak
           sed -i '/7z x .*\.img/ c\simg2img "\$1" "\$2"' dumper.sh
           echo "::endgroup::"
@@ -78,6 +79,7 @@ jobs:
           curl -L --retry 8 --retry-connrefused -O "${ROM_LINK}"
           export FIRMWARE_FILE=$(ls -1t | head -n1)
           echo "Downloaded firmware file: $FIRMWARE_FILE"
+
           # Post-download cleanup
           export ROOT_RESERVE_MB=5120 TEMP_RESERVE_MB=5120
           bash /tmp/maximize.space.sh 2>/dev/null || true
