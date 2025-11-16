@@ -19,6 +19,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
       - name: Download Cleanup Script
         run: |
           echo "::group::Download Cleanup Script"
@@ -35,6 +38,7 @@ jobs:
           find $GITHUB_WORKSPACE /tmp /var/tmp -maxdepth 1 -user $USER -exec rm -rf {} + 2>/dev/null || true
           if command -v docker >/dev/null 2>&1; then docker system prune -af; fi
           echo "::endgroup::"
+          working-directory: ${{ github.workspace }}
 
       - name: Prepare Dumper & Patch IMG
         run: |
@@ -70,6 +74,7 @@ jobs:
           cp dumper.sh dumper.sh.bak
           sed -i '/7z x .*\.img/ c\simg2img "\$1" "\$2"' dumper.sh
           echo "::endgroup::"
+          working-directory: ${{ github.workspace }}
 
       - name: Download Firmware
         run: |
